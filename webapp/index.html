@@ -200,8 +200,17 @@ function back(fn) {
 }
 function send(obj) {
   const data = JSON.stringify(obj);
-  if (inTG) { try { tg.disableClosingConfirmation(); } catch (e) {} tg.sendData(data); }
-  else alert("Открыто вне Telegram. Данные для бота:\n" + data);
+  if (!inTG) return alert("Открыто вне Telegram. Данные для бота:\n" + data);
+  try { tg.disableClosingConfirmation(); } catch (e) {}
+  try { tg.sendData(data); }
+  catch (e) {
+    // sendData работает только из кнопки внизу; из меню без API данные не отправить
+    const msg = "Не удалось отправить данные (" + (e.message || e) + "). Закройте приложение, "
+      + "отправьте боту /start и откройте его кнопкой «Начать» слева от поля ввода.";
+    const err = document.getElementById("err") || document.getElementById("note");
+    if (err) err.textContent = msg; else alert(msg);
+    notify("error");
+  }
 }
 function toast(text) {
   const t = document.createElement("div"); t.className = "toast"; t.textContent = text;
@@ -260,7 +269,9 @@ function screenRegister() {
     const p = ok && res && res.responseUnsafe && res.responseUnsafe.contact && res.responseUnsafe.contact.phone_number;
     if (p) document.getElementById("phone").value = (p.startsWith("+") ? "" : "+") + p;
   });
-  document.getElementById("go").onclick = () => {
+  document.getElementById("go").onclick = () => { try { submit(); } catch (e) {
+    document.getElementById("err").textContent = "Ошибка: " + (e.message || e); notify("error"); } };
+  const submit = () => {
     const name = document.getElementById("name").value.trim().replace(/\s+/g, " ");
     const phone = document.getElementById("phone").value.trim();
     const err = document.getElementById("err");
