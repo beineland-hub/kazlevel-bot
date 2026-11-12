@@ -166,10 +166,18 @@ function readState() {
 }
 let S = readState();
 const FROM_KEYBOARD = !!new URLSearchParams(location.search).get("d");   // ?d= бот кладёт только в кнопку внизу
-const VERSION = "v4";
-// любые ошибки JS показываем на экране, а не молча
-window.addEventListener("error", e => diag("JS: " + e.message));
-window.addEventListener("unhandledrejection", e => diag("JS: " + (e.reason && e.reason.message || e.reason)));
+const VERSION = "v5";
+// любые ошибки показываем на экране и отправляем админу через бота
+function report(msg) {
+  diag(msg);
+  try {
+    fetch("api/clientlog", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({initData: tg ? tg.initData : "", msg: String(msg),
+        info: (document.getElementById("diag") || {}).textContent || ""})}).catch(() => {});
+  } catch (e) {}
+}
+window.addEventListener("error", e => report("JS: " + e.message + " @" + (e.lineno || "?")));
+window.addEventListener("unhandledrejection", e => report("JS: " + (e.reason && e.reason.message || e.reason)));
 function diag(extra) {
   let el = document.getElementById("diag");
   if (!el) { el = document.createElement("div"); el.id = "diag";
@@ -307,7 +315,8 @@ function screenRegister() {
     busy(btn, true);
     api("register", {name, phone, age})
       .then(j => { S = j.state; notify("success"); toast("🎉 Вы зарегистрированы!"); screenHome(); })
-      .catch(e => { busy(btn, false); notify("error"); err.textContent = "Не удалось сохранить: " + e.message; });
+      .catch(e => { busy(btn, false); notify("error"); err.textContent = "Не удалось сохранить: " + e.message;
+        report("register: " + e.message); });
   };
 }
 
@@ -439,6 +448,7 @@ function finish() {
         + QZ.groupSize + " человек вашего уровня, мы напишем вам 🙌";
       btn.innerHTML = "👍 Готово"; btn.onclick = () => { haptic(); screenHome(); };
     }).catch(e => {
+      report("result: " + e.message);
       busy(btn, false);
       document.getElementById("note").textContent = "⚠️ Не удалось сохранить (" + e.message + "). Проверьте интернет и нажмите «Повторить».";
       btn.innerHTML = "🔄 Повторить"; btn.onclick = save;
@@ -466,11 +476,19 @@ function confetti() {
 
 // ------------------------------------------------------------- старт
 (async function boot() {
+  if (inTG && !API && !FROM_KEYBOARD) {
+    // Telegram не передал данные авторизации — сохранить результат будет нельзя, поэтому сразу говорим, что делать
+    diag(); report("boot: no initData");
+    render(`<div class="hero" style="padding-top:90px"><div class="mascot">🦊</div>
+      <h1>Откройте приложение заново</h1>
+      <p>Закройте это окно и нажмите кнопку <b>«Начать»</b> слева от поля ввода в чате с ботом.</p></div>`);
+    return;
+  }
   if (API) {
     render(`<div class="hero" style="padding-top:120px"><div class="mascot">🦊</div><p>Загрузка…</p></div>`);
     try { S = (await api("state")).state; }
     catch (e) {
-      diag("state: " + e.message);
+      report("state: " + e.message);
       if (!FROM_KEYBOARD) {
         // открыто из меню, но сервер не ответил — без него результат не сохранить, поэтому честно сообщаем
         render(`<div class="hero" style="padding-top:90px"><div class="mascot">😿</div>

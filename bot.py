@@ -141,8 +141,36 @@ def student_state(uid: int) -> dict:
     return state
 
 
-def main_menu(uid: int) -> ReplyKeyboardMarkup:
-    """Төменгі мәзір: сол жақта «🚀 Начать» (қосымша), оң жақта «❓ Помощь»."""
+def menu_mode() -> bool:
+    """Railway: қосымша тек Telegram-ның мәзір батырмасы («Начать», жазу жолағының сол жағы)
+    және хабарламадағы батырма арқылы ашылады — екеуі де тікелей серверге қосылады."""
+    return bool(PORT and WEBAPP_URL.startswith("https://"))
+
+
+def app_url() -> str:
+    """Қосымша мекенжайы + нұсқа белгісі (Telegram ескі нұсқаны кештен көрсетпеуі үшін)."""
+    ver = (os.getenv("RAILWAY_DEPLOYMENT_ID") or os.getenv("RAILWAY_GIT_COMMIT_SHA") or "1")[:12]
+    return f"{WEBAPP_URL}{'&' if '?' in WEBAPP_URL else '?'}v={ver}"
+
+
+def start_hint() -> str:
+    return ("кнопку <b>«Начать»</b> слева от поля ввода" if menu_mode()
+            else f"<b>«{BTN_START if WEBAPP_URL else BTN_TEST}»</b>")
+
+
+def open_app_kb(text: str = "🚀 Начать") -> InlineKeyboardMarkup | None:
+    """Хабарламаның астындағы қосымшаны ашатын батырма (мәзір режимінде)."""
+    if not menu_mode():
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=text, web_app=WebAppInfo(url=app_url()))]])
+
+
+def main_menu(uid: int) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
+    """Төменгі мәзір. Railway-де жоқ (ескісін де өшіреді) — тек «Начать» мәзір батырмасы.
+    Компьютерде: сол жақта «🚀 Начать» (қосымша), оң жақта «❓ Помощь»."""
+    if menu_mode():
+        return ReplyKeyboardRemove()
     if WEBAPP_URL:
         first = KeyboardButton(text=BTN_START, web_app=WebAppInfo(url=webapp_link(uid)))
         rows = [[first, KeyboardButton(text=BTN_HELP)]]
@@ -169,16 +197,17 @@ async def notify_admins(bot: Bot, text: str) -> None:
 
 
 # ======================================================================== start
-GREETING = (
-    "Сәлеметсіз бе! 👋 <b>Здравствуйте!</b>\n\n"
-    "Я — бот <b>My Kazakh Level</b>. За 10–15 минут я определю ваш уровень "
-    "казахского языка и подберу группу с учениками вашего уровня.\n\n"
-    "Что нужно сделать:\n"
-    "1️⃣ Нажмите <b>«🚀 Начать»</b> внизу слева\n"
-    "2️⃣ Укажите имя, телефон и возраст\n"
-    "3️⃣ Пройдите короткий тест\n\n"
-    "Тесты разные для детей 6–10 лет, школьников 10–18 лет и взрослых. 🇰🇿"
-)
+def greeting() -> str:
+    return (
+        "Сәлеметсіз бе! 👋 <b>Здравствуйте!</b>\n\n"
+        "Я — бот <b>My Kazakh Level</b>. За 10–15 минут я определю ваш уровень "
+        "казахского языка и подберу группу с учениками вашего уровня.\n\n"
+        "Что нужно сделать:\n"
+        f"1️⃣ Нажмите {start_hint()} или кнопку под этим сообщением\n"
+        "2️⃣ Укажите имя, телефон и возраст\n"
+        "3️⃣ Пройдите короткий тест\n\n"
+        "Тесты разные для детей 6–10 лет, школьников 10–18 лет и взрослых. 🇰🇿"
+    )
 
 
 @router.message(CommandStart())
@@ -186,17 +215,28 @@ async def start(msg: Message, state: FSMContext):
     await state.clear()
     uid = msg.from_user.id
     st = db.get_student(uid)
+    if menu_mode():
+        # 1) ескі төменгі батырмаларды өшіреміз, 2) хабарламаның астына «Начать» батырмасын береміз
+        await msg.answer("🇰🇿", reply_markup=ReplyKeyboardRemove())
+        if st:
+            await msg.answer(f"С возвращением, <b>{esc(st['name'])}</b>! 👋\n"
+                             f"Нажмите {start_hint()}, чтобы открыть тест и личный кабинет.",
+                             reply_markup=open_app_kb("🚀 Открыть"))
+        else:
+            await msg.answer(greeting(), reply_markup=open_app_kb())
+        return
     if st:
         await msg.answer(
             f"С возвращением, <b>{esc(st['name'])}</b>! 👋\n"
-            f"Нажмите <b>«{BTN_START if WEBAPP_URL else BTN_TEST}»</b>, чтобы открыть тест и кабинет.",
+            f"Нажмите {start_hint()}, чтобы открыть тест и кабинет.",
             reply_markup=main_menu(uid))
         return
     if WEBAPP_URL:
-        await msg.answer(GREETING, reply_markup=main_menu(uid))
+        await msg.answer(greeting().replace(" или кнопку под этим сообщением", ""),
+                         reply_markup=main_menu(uid))
         return
     # Mini App жоқ: тіркелу чатта
-    await msg.answer(GREETING.split("Что нужно сделать")[0], reply_markup=ReplyKeyboardRemove())
+    await msg.answer(greeting().split("Что нужно сделать")[0], reply_markup=ReplyKeyboardRemove())
     await state.set_state(Reg.name)
     await msg.answer("✍️ Напишите имя и фамилию ученика:")
 
@@ -206,7 +246,8 @@ async def start(msg: Message, state: FSMContext):
 async def help_cmd(msg: Message):
     await msg.answer(
         "ℹ️ <b>Как это работает</b>\n\n"
-        "• <b>«🚀 Начать»</b> открывает приложение: регистрация, тест и личный кабинет.\n"
+        f"• {start_hint()[0].upper() + start_hint()[1:]} открывает приложение: "
+        "регистрация, тест и личный кабинет.\n"
         "• Вопросы становятся сложнее шаг за шагом. Если этап не пройден, тест "
         "заканчивается — это нормально, так мы точнее определяем уровень.\n"
         "• Не знаете ответа — нажмите <b>«🤷 Не знаю»</b>, не угадывайте.\n"
@@ -262,11 +303,10 @@ async def register_student(bot: Bot, uid: int, username: str | None, name: str, 
                            age: str, quiet: bool = False) -> None:
     """Чаттан, Mini App-тан не API-ден тіркелу осы жерде аяқталады."""
     db.add_student(uid, name, phone, age, username)
-    btn = BTN_START if WEBAPP_URL else BTN_TEST
     text = (f"🎉 <b>{esc(name)}</b>, вы зарегистрированы!\n"
             f"Возрастная группа: {title_ru(age)}\n\n"
             + ("Тест уже открыт в приложении — удачи! 🍀" if quiet else
-               f"Теперь нажмите <b>«{btn}»</b> и пройдите тест — это займёт 10–15 минут."))
+               f"Теперь нажмите {start_hint()} и пройдите тест — это займёт 10–15 минут."))
     await bot.send_message(uid, text, reply_markup=main_menu(uid))
     uname = f"@{esc(username)}" if username else "—"
     await notify_admins(bot,
@@ -387,7 +427,7 @@ async def save_and_report(bot: Bot, uid: int, age: str, seq, answers, dont_know:
         f"👥 Группа вашего уровня собирается: {min(waiting, GROUP_SIZE)}/{GROUP_SIZE}.\n"
         "Как только она наберётся, мы сразу напишем вам здесь, "
         "и с вами свяжется преподаватель.\n\n"
-        "Результат сохранён в личном кабинете («🚀 Начать»). Спасибо! 🙌",
+        f"Результат сохранён в личном кабинете ({start_hint()}). Спасибо! 🙌",
         reply_markup=main_menu(uid))
     st = db.get_student(uid)
     await notify_admins(bot,
@@ -451,23 +491,25 @@ async def webapp_data(msg: Message, state: FSMContext, bot: Bot):
 # ========================================================== API (Railway, мәзір батырмасы)
 def check_init_data(init_data: str) -> dict | None:
     """Telegram-ның initData қолтаңбасын тексереді. Дұрыс болса — пайдаланушы деректері."""
-    try:
-        pairs = dict(parse_qsl(init_data or "", strict_parsing=True))
-    except ValueError:
-        return None
+    # keep_blank_values: Telegram бос өріс жіберсе де қолтаңба дұрыс есептелуі үшін
+    pairs = dict(parse_qsl(init_data or "", keep_blank_values=True))
     received = pairs.pop("hash", None)
     if not received:
+        logging.warning("initData: hash жоқ (ұзындығы %s)", len(init_data or ""))
         return None
     check = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
     secret = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
     calc = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(calc, received):
+        logging.warning("initData: қолтаңба сәйкес емес, өрістер: %s", sorted(pairs))
         return None
-    if time.time() - int(pairs.get("auth_date", "0")) > 24 * 3600:
+    if time.time() - int(pairs.get("auth_date", "0") or 0) > 7 * 24 * 3600:
+        logging.warning("initData: ескірген (auth_date=%s)", pairs.get("auth_date"))
         return None
     try:
         user = json.loads(pairs.get("user", "{}"))
     except ValueError:
+        logging.warning("initData: user оқылмады")
         return None
     return user if user.get("id") else None
 
@@ -479,7 +521,9 @@ async def _api_user(request: web.Request) -> tuple[dict, dict]:
         raise web.HTTPBadRequest(text="bad json")
     user = check_init_data(body.get("initData", ""))
     if not user:
+        logging.warning("API %s: initData қабылданбады", request.path)
         raise web.HTTPUnauthorized(text="bad initData")
+    logging.info("API %s: user %s", request.path, user.get("id"))
     return body, user
 
 
@@ -513,13 +557,36 @@ async def api_result(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "result": res, "state": student_state(user["id"])})
 
 
+_clientlog_times: list[float] = []
+
+
+async def api_clientlog(request: web.Request) -> web.Response:
+    """Қосымшадағы қатені логқа жазып, админге хабарлайды (сағатына 20-дан көп емес)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False}, status=400)
+    user = check_init_data(body.get("initData", "")) or {}
+    text = str(body.get("msg", ""))[:500]
+    info = str(body.get("info", ""))[:200]
+    logging.warning("Қосымша қатесі [%s]: %s | %s", user.get("id", "?"), text, info)
+    now = time.time()
+    _clientlog_times[:] = [t for t in _clientlog_times if now - t < 3600]
+    if len(_clientlog_times) < 20:
+        _clientlog_times.append(now)
+        who = f"{user.get('first_name', '')} (id {user['id']})" if user.get("id") else "белгісіз"
+        await notify_admins(request.app["bot"],
+            f"⚠️ <b>Қосымшада қате</b>\n👤 {esc(who)}\n<code>{esc(text)}</code>\n<i>{esc(info)}</i>")
+    return web.json_response({"ok": True})
+
+
 async def web_index(request: web.Request) -> web.Response:
-    return web.FileResponse(WEBAPP_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+    return web.FileResponse(WEBAPP_DIR / "index.html", headers={"Cache-Control": "no-store, max-age=0"})
 
 
 async def web_questions(request: web.Request) -> web.Response:
     return web.Response(text=quiz_js(), content_type="application/javascript",
-                        headers={"Cache-Control": "no-cache"})
+                        headers={"Cache-Control": "no-store, max-age=0"})
 
 
 def make_web_app(bot: Bot) -> web.Application:
@@ -532,6 +599,7 @@ def make_web_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/state", api_state)
     app.router.add_post("/api/register", api_register)
     app.router.add_post("/api/result", api_result)
+    app.router.add_post("/api/clientlog", api_clientlog)
     return app
 
 
@@ -726,7 +794,8 @@ async def fallback(msg: Message, state: FSMContext):
     if msg.contact:  # Mini App ішінде «нөмірді алу» басылғанда келеді — жауап керек емес
         return
     if db.get_student(msg.from_user.id):
-        await msg.answer("Нажмите кнопку внизу 👇", reply_markup=main_menu(msg.from_user.id))
+        await msg.answer(f"Нажмите {start_hint()} 👇",
+                         reply_markup=open_app_kb() or main_menu(msg.from_user.id))
     else:
         await msg.answer("Чтобы начать, нажмите /start")
 
@@ -781,7 +850,8 @@ async def main():
         if WEBAPP_URL.startswith("https://"):
             try:
                 await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(
-                    text="Начать", web_app=WebAppInfo(url=WEBAPP_URL)))
+                    text="Начать", web_app=WebAppInfo(url=app_url())))
+                logging.info("Мәзір батырмасы: %s", app_url())
             except Exception as e:
                 logging.warning("Мәзір батырмасы орнатылмады: %s", e)
     dp = Dispatcher(storage=MemoryStorage())
