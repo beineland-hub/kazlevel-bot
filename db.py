@@ -6,7 +6,8 @@ from pathlib import Path
 
 # Railway-де DATA_DIR өшпейтін дискіге (Volume) нұсқайды, мысалы /data.
 # Компьютерде бос болса — база бот папкасында сақталады.
-DATA_DIR = Path(os.getenv("DATA_DIR") or Path(__file__).parent)
+# RAILWAY_VOLUME_MOUNT_PATH — Railway Volume қосылғанда өзі беретін жол (мысалы /data).
+DATA_DIR = Path(os.getenv("DATA_DIR") or os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or Path(__file__).parent)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "students.db"
 

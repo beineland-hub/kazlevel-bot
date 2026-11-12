@@ -65,6 +65,10 @@ _railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
 # Бос болса — бот чат арқылы жұмыс істейді.
 WEBAPP_URL = (os.getenv("WEBAPP_URL", "").strip()
               or (f"https://{_railway_domain}/" if _railway_domain else ""))
+if PORT and _railway_domain:
+    # Railway-де қосымша мен API осы сервердің өзінде — басқа мекенжай (мысалы ескі GitHub Pages)
+    # берілсе де, әрқашан өз доменімізді қолданамыз, әйтпесе тіркелу серверге жетпейді.
+    WEBAPP_URL = f"https://{_railway_domain}/"
 WEBAPP_DIR = Path(__file__).with_name("webapp")
 
 router = Router()
