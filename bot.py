@@ -558,6 +558,38 @@ async def api_result(request: web.Request) -> web.Response:
 
 
 _clientlog_times: list[float] = []
+LOG_RING: list[str] = []  # соңғы 400 жол (админ /api/debug арқылы оқиды)
+
+
+class RingHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        LOG_RING.append(f"{datetime.now():%H:%M:%S} {record.levelname[0]} {record.getMessage()}"[:600])
+        del LOG_RING[:-400]
+
+
+@web.middleware
+async def log_requests(request: web.Request, handler):
+    """Әр сұранысты журналға жазады (қосымша қалай ашылғанын көру үшін)."""
+    try:
+        resp = await handler(request)
+        status = resp.status
+        return resp
+    except web.HTTPException as e:
+        status = e.status
+        raise
+    finally:
+        if request.path not in ("/health", "/api/clientlog", "/api/debug"):
+            logging.info("HTTP %s %s?%s -> %s | %s", request.method, request.path,
+                         request.query_string[:40], locals().get("status", "ERR"),
+                         request.headers.get("User-Agent", "")[:80])
+
+
+async def api_debug(request: web.Request) -> web.Response:
+    """Журналды қайтарады — тек админнің қолтаңбасымен."""
+    _, user = await _api_user(request)
+    if not is_admin(user["id"]):
+        raise web.HTTPForbidden()
+    return web.json_response({"ok": True, "log": LOG_RING[-int(request.query.get("n", 200)):]})
 
 
 async def api_clientlog(request: web.Request) -> web.Response:
@@ -569,6 +601,9 @@ async def api_clientlog(request: web.Request) -> web.Response:
     user = check_init_data(body.get("initData", "")) or {}
     text = str(body.get("msg", ""))[:500]
     info = str(body.get("info", ""))[:200]
+    if body.get("silent"):
+        logging.info("Қосымша [%s]: %s", user.get("id", "?"), text)
+        return web.json_response({"ok": True})
     logging.warning("Қосымша қатесі [%s]: %s | %s", user.get("id", "?"), text, info)
     now = time.time()
     _clientlog_times[:] = [t for t in _clientlog_times if now - t < 3600]
@@ -590,7 +625,7 @@ async def web_questions(request: web.Request) -> web.Response:
 
 
 def make_web_app(bot: Bot) -> web.Application:
-    app = web.Application(client_max_size=256 * 1024)
+    app = web.Application(client_max_size=256 * 1024, middlewares=[log_requests])
     app["bot"] = bot
     app.router.add_get("/", web_index)
     app.router.add_get("/index.html", web_index)
@@ -600,6 +635,7 @@ def make_web_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/register", api_register)
     app.router.add_post("/api/result", api_result)
     app.router.add_post("/api/clientlog", api_clientlog)
+    app.router.add_post("/api/debug", api_debug)
     return app
 
 
@@ -845,6 +881,8 @@ async def main():
     for s in (sys.stdout, sys.stderr):  # Windows консолі қазақ әріптерін көрсетуі үшін
         s.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(level=logging.INFO)
+    logging.getLogger().addHandler(RingHandler())
+    logging.getLogger("aiogram.event").setLevel(logging.WARNING)
     if not BOT_TOKEN:
         raise SystemExit("BOT_TOKEN жоқ. .env файлына BOT_TOKEN=... жазыңыз.")
     if not ADMIN_IDS:

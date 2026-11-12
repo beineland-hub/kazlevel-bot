@@ -166,16 +166,18 @@ function readState() {
 }
 let S = readState();
 const FROM_KEYBOARD = !!new URLSearchParams(location.search).get("d");   // ?d= бот кладёт только в кнопку внизу
-const VERSION = "v5";
+const VERSION = "v6";
 // любые ошибки показываем на экране и отправляем админу через бота
-function report(msg) {
-  diag(msg);
+function report(msg, silent) {
+  if (!silent) diag(msg);
   try {
     fetch("api/clientlog", {method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({initData: tg ? tg.initData : "", msg: String(msg),
+      body: JSON.stringify({initData: tg ? tg.initData : "", msg: String(msg), silent: !!silent,
         info: (document.getElementById("diag") || {}).textContent || ""})}).catch(() => {});
   } catch (e) {}
 }
+// тихий журнал шагов (только в лог сервера, без уведомлений)
+const trace = (step) => report("trace: " + step, true);
 window.addEventListener("error", e => report("JS: " + e.message + " @" + (e.lineno || "?")));
 window.addEventListener("unhandledrejection", e => report("JS: " + (e.reason && e.reason.message || e.reason)));
 function diag(extra) {
@@ -258,7 +260,7 @@ function screenWelcome() {
       </div>
       <button class="btn" id="go">Начать 🚀</button>
     </div>`);
-  document.getElementById("go").onclick = () => { haptic("medium"); screenRegister(); };
+  document.getElementById("go").onclick = () => { trace("welcome click"); haptic("medium"); screenRegister(); };
 }
 
 // ------------------------------------------------------------- 2. регистрация
@@ -292,12 +294,17 @@ function screenRegister() {
     const p = ok && res && res.responseUnsafe && res.responseUnsafe.contact && res.responseUnsafe.contact.phone_number;
     if (p) document.getElementById("phone").value = (p.startsWith("+") ? "" : "+") + p;
   });
-  document.getElementById("go").onclick = () => { try { submit(); } catch (e) {
+  trace("register screen shown");
+  const goBtn = document.getElementById("go");
+  goBtn.addEventListener("touchstart", () => trace("register touchstart"), {passive: true});
+  goBtn.onclick = () => { trace("register click"); try { submit(); } catch (e) {
+    trace("register exception " + (e.message || e));
     document.getElementById("err").textContent = "Ошибка: " + (e.message || e); notify("error"); } };
   const submit = () => {
     const name = document.getElementById("name").value.trim().replace(/\s+/g, " ");
     const phone = document.getElementById("phone").value.trim();
     const err = document.getElementById("err");
+    trace(`submit name=${name.length} phone=${phone.replace(/\D/g, "").length} age=${age} api=${API}`);
     if (name.length < 2) { notify("error"); return err.textContent = "Напишите имя и фамилию"; }
     if (phone.replace(/\D/g, "").length < 10) { notify("error"); return err.textContent = "Введите номер телефона полностью"; }
     if (!age) { notify("error"); return err.textContent = "Выберите возраст"; }
@@ -313,8 +320,9 @@ function screenRegister() {
     }
     const btn = document.getElementById("go");
     busy(btn, true);
+    trace("register api start");
     api("register", {name, phone, age})
-      .then(j => { S = j.state; notify("success"); toast("🎉 Вы зарегистрированы!"); screenHome(); })
+      .then(j => { trace("register api ok"); S = j.state; notify("success"); toast("🎉 Вы зарегистрированы!"); screenHome(); })
       .catch(e => { busy(btn, false); notify("error"); err.textContent = "Не удалось сохранить: " + e.message;
         report("register: " + e.message); });
   };
@@ -476,6 +484,7 @@ function confetti() {
 
 // ------------------------------------------------------------- старт
 (async function boot() {
+  trace(`boot ${VERSION} platform=${tg && tg.platform} ver=${tg && tg.version} init=${tg && tg.initData ? tg.initData.length : 0} kbd=${FROM_KEYBOARD} url=${location.pathname}${location.search.slice(0, 20)}`);
   if (inTG && !API && !FROM_KEYBOARD) {
     // Telegram не передал данные авторизации — сохранить результат будет нельзя, поэтому сразу говорим, что делать
     diag(); report("boot: no initData");
