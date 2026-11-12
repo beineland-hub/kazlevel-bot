@@ -434,7 +434,17 @@ function confetti() {
   if (API) {
     render(`<div class="hero" style="padding-top:120px"><div class="mascot">🦊</div><p>Загрузка…</p></div>`);
     try { S = (await api("state")).state; }
-    catch (e) { API = false; }   // API недоступен (например, GitHub Pages) → работаем через ?d= и sendData
+    catch (e) {
+      if (!new URLSearchParams(location.search).get("d")) {
+        // открыто из меню, но сервер не ответил — без него результат не сохранить, поэтому честно сообщаем
+        render(`<div class="hero" style="padding-top:90px"><div class="mascot">😿</div>
+          <h1>Не удалось подключиться</h1><p>Проверьте интернет и попробуйте ещё раз.<br><small>${esc(e.message)}</small></p></div>
+          <div class="card"><button class="btn" id="retry">🔄 Повторить</button></div>`);
+        document.getElementById("retry").onclick = () => location.reload();
+        return;
+      }
+      API = false;   // есть данные от кнопки внизу → работаем через ?d= и sendData
+    }
   }
   if (!S.reg) screenWelcome(); else screenHome();
 })();
