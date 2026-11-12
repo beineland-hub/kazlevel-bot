@@ -675,6 +675,7 @@ async def admin_help(msg: Message):
         "/groups — құрылған топтар\n"
         "/export — барлық студенттер (Excel/CSV файл)\n"
         "/backup — базаның көшірмесі (students.db)\n"
+        "/reset — өз жазбаңызды өшіру (тіркелуді қайта тексеру үшін)\n"
         "Базаны ауыстыру үшін .db файлын ботқа жай жіберіңіз.")
 
 
@@ -755,6 +756,17 @@ async def admin_export(msg: Message):
     await msg.answer_document(BufferedInputFile(data, filename="students.csv"))
 
 
+@router.message(Command("reset"))
+async def admin_reset(msg: Message, state: FSMContext):
+    """Админ өз жазбасын өшіреді — тіркелуді жаңа адам ретінде тексеру үшін."""
+    if not is_admin(msg.from_user.id):
+        return
+    await state.clear()
+    db.delete_student(msg.from_user.id)
+    await msg.answer("🧹 Сіздің жазбаңыз базадан өшірілді. Енді «Начать» басып, "
+                     "жаңа студент ретінде тіркеліп көріңіз.", reply_markup=ReplyKeyboardRemove())
+
+
 @router.message(Command("backup"))
 async def admin_backup(msg: Message):
     """Админге базаның көшірмесін (students.db) жібереді."""
@@ -811,7 +823,8 @@ async def setup_commands(bot: Bot) -> None:
                        BotCommand(command="queue", description="Топқа кезек"),
                        BotCommand(command="groups", description="Құрылған топтар"),
                        BotCommand(command="export", description="Excel файл"),
-                       BotCommand(command="backup", description="Базаның көшірмесі")]
+                       BotCommand(command="backup", description="Базаның көшірмесі"),
+                       BotCommand(command="reset", description="Өз жазбамды өшіру (тест үшін)")]
     for aid in ADMIN_IDS:
         try:
             await bot.set_my_commands(admin, scope=BotCommandScopeChat(chat_id=aid))

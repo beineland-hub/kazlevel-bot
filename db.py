@@ -74,6 +74,14 @@ def add_student(tg_id: int, name: str, phone: str, age_group: str, username: str
         )
 
 
+def delete_student(tg_id: int) -> None:
+    """Студентті, оның нәтижелерін және топ мүшелігін толық өшіреді."""
+    with _conn() as c:
+        c.execute("DELETE FROM group_members WHERE tg_id=?", (tg_id,))
+        c.execute("DELETE FROM results WHERE tg_id=?", (tg_id,))
+        c.execute("DELETE FROM students WHERE tg_id=?", (tg_id,))
+
+
 # ---------------------------------------------------------------- results
 def save_result(tg_id, age_group, level, correct, answered, dont_know) -> None:
     with _conn() as c:
