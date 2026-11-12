@@ -39,7 +39,7 @@
   .blobs i:nth-child(3){width:180px;height:180px;background:var(--blob3);top:40%;left:55%;animation-delay:-9s;opacity:.4}
   @keyframes float{to{transform:translate(30px,40px) scale(1.12)}}
 
-  #app{position:relative;z-index:1;max-width:520px;margin:0 auto;padding:18px 16px 40px;min-height:100vh}
+  #app{position:relative;z-index:1;max-width:520px;margin:0 auto;padding:18px 16px 64px;min-height:100vh}
   h1,h2,h3{font-family:var(--font-head);margin:0}
   .muted{color:var(--muted);font-size:14px}
   .center{text-align:center}
@@ -165,6 +165,21 @@ function readState() {
   } catch (e) { return {}; }
 }
 let S = readState();
+const FROM_KEYBOARD = !!new URLSearchParams(location.search).get("d");   // ?d= бот кладёт только в кнопку внизу
+const VERSION = "v4";
+// любые ошибки JS показываем на экране, а не молча
+window.addEventListener("error", e => diag("JS: " + e.message));
+window.addEventListener("unhandledrejection", e => diag("JS: " + (e.reason && e.reason.message || e.reason)));
+function diag(extra) {
+  let el = document.getElementById("diag");
+  if (!el) { el = document.createElement("div"); el.id = "diag";
+    el.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:9;pointer-events:none;text-align:center;"
+      + "font-size:11px;color:#8c6b55;background:rgba(255,255,255,.7);padding:4px 8px";
+    document.body.appendChild(el); }
+  el.textContent = [VERSION, tg ? (tg.platform + " " + tg.version) : "browser",
+    FROM_KEYBOARD ? "kbd" : "menu", "init:" + (tg && tg.initData ? tg.initData.length : 0),
+    "api:" + (API ? "on" : "off")].join(" · ") + (extra ? " · " + extra : "");
+}
 // Мәзір батырмасынан ашылса initData бар → бот API-і арқылы жұмыс істейміз (Railway).
 // Төменгі батырмадан ашылса initData бос → ?d= және sendData арқылы.
 let API = !!(inTG && tg.initData);
@@ -278,7 +293,16 @@ function screenRegister() {
     if (name.length < 2) { notify("error"); return err.textContent = "Напишите имя и фамилию"; }
     if (phone.replace(/\D/g, "").length < 10) { notify("error"); return err.textContent = "Введите номер телефона полностью"; }
     if (!age) { notify("error"); return err.textContent = "Выберите возраст"; }
-    if (!API) { notify("success"); return send({t: "reg", name, phone, age}); }
+    if (!API) {
+      if (inTG && !FROM_KEYBOARD) {
+        // открыто не кнопкой внизу и без связи с сервером — Telegram молча проигнорирует sendData
+        notify("error");
+        return err.textContent = "Не удаётся связаться с сервером. Закройте приложение, отправьте боту /start "
+          + "и откройте его снова кнопкой «Начать» слева от поля ввода.";
+      }
+      err.textContent = "⏳ Отправляем…"; notify("success");
+      return send({t: "reg", name, phone, age});
+    }
     const btn = document.getElementById("go");
     busy(btn, true);
     api("register", {name, phone, age})
@@ -446,7 +470,8 @@ function confetti() {
     render(`<div class="hero" style="padding-top:120px"><div class="mascot">🦊</div><p>Загрузка…</p></div>`);
     try { S = (await api("state")).state; }
     catch (e) {
-      if (!new URLSearchParams(location.search).get("d")) {
+      diag("state: " + e.message);
+      if (!FROM_KEYBOARD) {
         // открыто из меню, но сервер не ответил — без него результат не сохранить, поэтому честно сообщаем
         render(`<div class="hero" style="padding-top:90px"><div class="mascot">😿</div>
           <h1>Не удалось подключиться</h1><p>Проверьте интернет и попробуйте ещё раз.<br><small>${esc(e.message)}</small></p></div>
@@ -458,6 +483,7 @@ function confetti() {
     }
   }
   if (!S.reg) screenWelcome(); else screenHome();
+  diag();
 })();
 </script>
 </body>
