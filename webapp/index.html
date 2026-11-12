@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>My Kazakh Level</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="questions.js"></script>
+<style>
+  /* ---------------------------------------------------------------- темы */
+  body{
+    --bg1:#FFF6EA; --bg2:#FFE2C4; --blob1:#FFC58A; --blob2:#FF9F7A; --blob3:#FFE08A;
+    --accent:#F2711C; --accent2:#FF9A3D; --ink:#3A2617; --muted:#8C6B55;
+    --card:rgba(255,255,255,.78); --line:rgba(120,72,40,.12); --radius:22px;
+    --font-head:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+  }
+  body.kids{   /* солнечно-мандариновая */
+    --bg1:#FFF8D9; --bg2:#FFD6A0; --blob1:#FFD24D; --blob2:#FF8A5B; --blob3:#9BE15D;
+    --accent:#FF7A00; --accent2:#FFB300; --ink:#3D2508; --muted:#9A6B2E; --radius:28px;
+  }
+  body.teens{  /* коралл и персик */
+    --bg1:#FFF0E8; --bg2:#FFC7B0; --blob1:#FF8A65; --blob2:#FFB74D; --blob3:#F48FB1;
+    --accent:#EE5A36; --accent2:#FF8F3F; --ink:#3B1E16; --muted:#97624F; --radius:22px;
+  }
+  body.adults{ /* песок и терракота */
+    --bg1:#FBF4EC; --bg2:#EBD3BC; --blob1:#E2A97E; --blob2:#C98B63; --blob3:#F3D9A4;
+    --accent:#B5532E; --accent2:#D88A4B; --ink:#2F2119; --muted:#86695A; --radius:18px;
+    --font-head:Georgia,"Times New Roman",serif;
+  }
+
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;min-height:100%;color:var(--ink);
+    font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+  body{background:linear-gradient(165deg,var(--bg1) 0%,var(--bg2) 100%) fixed;transition:background .6s}
+  .blobs{position:fixed;inset:0;overflow:hidden;z-index:0;pointer-events:none}
+  .blobs i{position:absolute;border-radius:50%;filter:blur(48px);opacity:.55;animation:float 14s ease-in-out infinite alternate}
+  .blobs i:nth-child(1){width:260px;height:260px;background:var(--blob1);top:-60px;left:-70px}
+  .blobs i:nth-child(2){width:300px;height:300px;background:var(--blob2);bottom:-90px;right:-90px;animation-delay:-5s}
+  .blobs i:nth-child(3){width:180px;height:180px;background:var(--blob3);top:40%;left:55%;animation-delay:-9s;opacity:.4}
+  @keyframes float{to{transform:translate(30px,40px) scale(1.12)}}
+
+  #app{position:relative;z-index:1;max-width:520px;margin:0 auto;padding:18px 16px 40px;min-height:100vh}
+  h1,h2,h3{font-family:var(--font-head);margin:0}
+  .muted{color:var(--muted);font-size:14px}
+  .center{text-align:center}
+
+  .card{background:var(--card);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid rgba(255,255,255,.7);border-radius:var(--radius);padding:18px;margin:14px 0;
+    box-shadow:0 10px 30px -12px rgba(90,45,10,.25)}
+  .label{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+
+  .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:16px;border:0;
+    border-radius:calc(var(--radius) - 6px);margin-top:14px;cursor:pointer;font-size:17px;font-weight:700;
+    color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    box-shadow:0 10px 22px -10px var(--accent);transition:transform .12s, box-shadow .2s}
+  .btn:active{transform:scale(.97)}
+  .btn.ghost{background:rgba(255,255,255,.65);color:var(--accent);box-shadow:none;border:1.5px solid var(--line)}
+  .btn.small{padding:11px;font-size:15px;margin-top:10px}
+  .btn:disabled{opacity:.5}
+
+  /* hero */
+  .hero{text-align:center;padding:22px 6px 4px}
+  .hero .mascot{font-size:68px;line-height:1;display:inline-block;animation:bob 2.6s ease-in-out infinite}
+  @keyframes bob{50%{transform:translateY(-8px) rotate(-4deg)}}
+  .hero h1{font-size:27px;margin:12px 0 6px;line-height:1.2}
+  .hero p{margin:0;color:var(--muted)}
+  .steps{display:grid;gap:10px;margin-top:4px}
+  .step{display:flex;gap:12px;align-items:center}
+  .step b{flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:#fff;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));font-size:15px}
+
+  /* form */
+  .field{margin-top:14px}
+  .field label{display:block;font-size:14px;font-weight:600;margin-bottom:6px}
+  input{width:100%;padding:14px 15px;border-radius:14px;border:1.5px solid var(--line);
+    background:rgba(255,255,255,.85);color:var(--ink);font-size:16px;outline:none;transition:border .2s, box-shadow .2s}
+  input:focus{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent)}
+  .ages{display:grid;gap:10px}
+  .age{display:flex;align-items:center;gap:14px;padding:14px;border-radius:18px;cursor:pointer;
+    border:2px solid transparent;background:rgba(255,255,255,.7);transition:transform .15s,border .2s}
+  .age:active{transform:scale(.98)}
+  .age .ico{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;font-size:28px;flex:none}
+  .age[data-k=kids] .ico{background:linear-gradient(135deg,#FFE066,#FF9A3D)}
+  .age[data-k=teens] .ico{background:linear-gradient(135deg,#FFB199,#EE5A36)}
+  .age[data-k=adults] .ico{background:linear-gradient(135deg,#F1D3B3,#B5532E)}
+  .age b{display:block;font-size:17px}
+  .age small{color:var(--muted)}
+  .age.sel{border-color:var(--accent);background:#fff}
+  .age .tick{margin-left:auto;font-size:22px;opacity:0;transition:opacity .2s}
+  .age.sel .tick{opacity:1}
+  .err{color:#D63B2F;font-size:14px;min-height:20px;margin-top:10px;font-weight:600}
+
+  /* home */
+  .level-card{text-align:center;position:relative;overflow:hidden}
+  .level-card .medal{font-size:46px}
+  .level-name{font-family:var(--font-head);font-size:22px;font-weight:700;margin:6px 0 10px;line-height:1.25}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:999px;
+    background:rgba(255,255,255,.8);font-size:14px;font-weight:600}
+  .meter{height:10px;border-radius:99px;background:rgba(0,0,0,.07);overflow:hidden;margin:10px 0 4px}
+  .meter i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .row:last-child{border:0}
+  .row span:first-child{color:var(--muted);white-space:nowrap}
+  .row span:last-child{font-weight:600;text-align:right}
+
+  /* test */
+  .topbar{display:flex;align-items:center;justify-content:space-between;font-size:14px;font-weight:600;color:var(--muted)}
+  .stages{display:flex;gap:6px;margin:10px 0 4px}
+  .stages i{flex:1;height:8px;border-radius:9px;background:rgba(0,0,0,.08);transition:background .3s}
+  .stages i.done{background:#3DBE6E}
+  .stages i.cur{background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .qcard{text-align:center;padding:26px 18px}
+  .qcard .emo{display:block;font-size:76px;line-height:1.1;margin-bottom:8px;animation:pop .4s ease}
+  @keyframes pop{from{transform:scale(.6);opacity:0}}
+  .qcard .q{font-size:22px;font-weight:700;line-height:1.3}
+  .qcard .ru{margin-top:10px;color:var(--muted);font-size:15px}
+  .opts{display:grid;gap:10px}
+  .opt{display:flex;align-items:center;gap:12px;width:100%;padding:15px 16px;border-radius:16px;cursor:pointer;
+    border:2px solid transparent;background:rgba(255,255,255,.88);color:var(--ink);font-size:17px;text-align:left;
+    box-shadow:0 4px 14px -8px rgba(90,45,10,.3);transition:transform .12s,border .15s,background .15s}
+  .opt:active{transform:scale(.98)}
+  .opt .letter{flex:none;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;font-size:14px;font-weight:800;
+    background:color-mix(in srgb,var(--accent) 14%,#fff);color:var(--accent)}
+  .opt.picked{border-color:var(--accent);background:#fff}
+  .opt.dk{justify-content:center;background:transparent;box-shadow:none;color:var(--muted);font-size:15px}
+  body.kids .opt{font-size:20px;padding:17px}
+  body.kids .qcard .q{font-size:24px}
+
+  /* result */
+  .big-emoji{font-size:82px;text-align:center;margin-top:16px;animation:pop .6s ease}
+  #confetti{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:5}
+  .toast{position:fixed;left:50%;top:22px;transform:translateX(-50%);z-index:6;padding:12px 18px;border-radius:999px;
+    background:#fff;font-weight:700;box-shadow:0 12px 30px -10px rgba(0,0,0,.35);animation:toast 1.6s ease forwards}
+  @keyframes toast{0%{opacity:0;transform:translate(-50%,-20px)}12%,80%{opacity:1;transform:translate(-50%,0)}100%{opacity:0}}
+
+  .screen{animation:in .35s cubic-bezier(.2,.8,.2,1)}
+  @keyframes in{from{opacity:0;transform:translateY(14px)}}
+</style>
+</head>
+<body>
+<div class="blobs"><i></i><i></i><i></i></div>
+<canvas id="confetti"></canvas>
+<div id="app"></div>
+<script>
+const tg = window.Telegram && window.Telegram.WebApp;
+// Төменгі батырма арқылы ашылғанда initData бос келеді, сондықтан platform бойынша тексереміз
+const inTG = !!(tg && tg.platform && tg.platform !== "unknown");
+if (tg) { tg.ready(); tg.expand(); try { tg.disableVerticalSwipes && tg.disableVerticalSwipes(); } catch (e) {} }
+const QZ = window.QUIZ;
+const ICON = {kids: "🧒", teens: "🧑‍🎓", adults: "🧑‍💼"};
+const MASCOT = {kids: "🦊", teens: "🚀", adults: "📚"};
+const AGE_HINT = {kids: "1–4 класс · игровой тест с картинками", teens: "5–11 класс", adults: "Взрослые · программа A1–C2"};
+const $app = document.getElementById("app");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const haptic = (t) => { try { tg.HapticFeedback.impactOccurred(t || "light"); } catch (e) {} };
+const notify = (t) => { try { tg.HapticFeedback.notificationOccurred(t); } catch (e) {} };
+
+// ------------------------------------------------------------- состояние от бота (?d=base64url JSON)
+function readState() {
+  try {
+    const d = new URLSearchParams(location.search).get("d");
+    if (!d) return {};
+    const b = atob(d.replace(/-/g, "+").replace(/_/g, "/"));
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(b, c => c.charCodeAt(0))));
+  } catch (e) { return {}; }
+}
+let S = readState();
+// Мәзір батырмасынан ашылса initData бар → бот API-і арқылы жұмыс істейміз (Railway).
+// Төменгі батырмадан ашылса initData бос → ?d= және sendData арқылы.
+let API = !!(inTG && tg.initData);
+async function api(path, body) {
+  const r = await fetch("api/" + path, {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(Object.assign({initData: tg.initData}, body || {}))});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+function busy(btn, on, text) {
+  if (!btn) return;
+  if (on) { btn.dataset.t = btn.innerHTML; btn.innerHTML = text || "⏳ Сохраняем…"; btn.disabled = true; }
+  else { btn.innerHTML = btn.dataset.t || btn.innerHTML; btn.disabled = false; }
+}
+
+// ------------------------------------------------------------- тема
+function setTheme(age) {
+  document.body.className = age || "";
+  const c = getComputedStyle(document.body).getPropertyValue("--bg1").trim();
+  try { tg.setHeaderColor(c); tg.setBackgroundColor(c); tg.setBottomBarColor && tg.setBottomBarColor(c); } catch (e) {}
+}
+
+function render(html) {
+  $app.innerHTML = `<div class="screen">${html}</div>`;
+  window.scrollTo(0, 0);
+}
+function back(fn) {
+  if (!tg || !tg.BackButton) return;
+  tg.BackButton.offClick(back._fn || (() => {}));
+  if (fn) { back._fn = () => { haptic(); fn(); }; tg.BackButton.onClick(back._fn); tg.BackButton.show(); }
+  else tg.BackButton.hide();
+}
+function send(obj) {
+  const data = JSON.stringify(obj);
+  if (inTG) { try { tg.disableClosingConfirmation(); } catch (e) {} tg.sendData(data); }
+  else alert("Открыто вне Telegram. Данные для бота:\n" + data);
+}
+function toast(text) {
+  const t = document.createElement("div"); t.className = "toast"; t.textContent = text;
+  document.body.appendChild(t); setTimeout(() => t.remove(), 1700);
+}
+
+// ------------------------------------------------------------- 1. приветствие
+function screenWelcome() {
+  setTheme(""); back(null);
+  render(`
+    <div class="hero">
+      <div class="mascot">🦊</div>
+      <h1>Сәлеметсіз бе! 👋<br>Здравствуйте!</h1>
+      <p>Узнайте свой уровень казахского языка за 10–15 минут</p>
+    </div>
+    <div class="card">
+      <div class="label">Как это работает</div>
+      <div class="steps">
+        <div class="step"><b>1</b><span>Укажите имя, телефон и возраст</span></div>
+        <div class="step"><b>2</b><span>Пройдите тест — вопросы усложняются постепенно</span></div>
+        <div class="step"><b>3</b><span>Получите уровень и место в группе из ${QZ.groupSize} человек</span></div>
+      </div>
+      <button class="btn" id="go">Начать 🚀</button>
+    </div>`);
+  document.getElementById("go").onclick = () => { haptic("medium"); screenRegister(); };
+}
+
+// ------------------------------------------------------------- 2. регистрация
+function screenRegister() {
+  let age = null;
+  setTheme(""); back(screenWelcome);
+  render(`
+    <div class="hero" style="padding-top:8px"><h1>Регистрация</h1><p>Это займёт меньше минуты</p></div>
+    <div class="card">
+      <div class="field"><label>Имя и фамилия ученика</label>
+        <input id="name" maxlength="60" placeholder="Например: Айгуль Серикова" autocomplete="name"></div>
+      <div class="field"><label>Номер телефона</label>
+        <input id="phone" type="tel" inputmode="tel" placeholder="+7 701 123 45 67" autocomplete="tel">
+        ${inTG && tg.requestContact ? `<button class="btn ghost small" id="tgphone">📱 Взять номер из Telegram</button>` : ""}
+      </div>
+      <div class="field"><label>Возраст ученика</label>
+        <div class="ages">${Object.entries(QZ.ages).map(([k, g]) => `
+          <div class="age" data-k="${k}"><div class="ico">${ICON[k]}</div>
+            <div><b>${esc(g.title_ru)}</b><small>${AGE_HINT[k]}</small></div><span class="tick">✅</span></div>`).join("")}
+        </div></div>
+      <p class="muted">Для ребёнка укажите его имя и возраст, а телефон — родителя.</p>
+      <div class="err" id="err"></div>
+      <button class="btn" id="go">Зарегистрироваться ✨</button>
+    </div>`);
+  document.querySelectorAll(".age").forEach(el => el.onclick = () => {
+    document.querySelectorAll(".age").forEach(x => x.classList.remove("sel"));
+    el.classList.add("sel"); age = el.dataset.k; setTheme(age); haptic();
+  });
+  const tp = document.getElementById("tgphone");
+  if (tp) tp.onclick = () => tg.requestContact((ok, res) => {
+    const p = ok && res && res.responseUnsafe && res.responseUnsafe.contact && res.responseUnsafe.contact.phone_number;
+    if (p) document.getElementById("phone").value = (p.startsWith("+") ? "" : "+") + p;
+  });
+  document.getElementById("go").onclick = () => {
+    const name = document.getElementById("name").value.trim().replace(/\s+/g, " ");
+    const phone = document.getElementById("phone").value.trim();
+    const err = document.getElementById("err");
+    if (name.length < 2) { notify("error"); return err.textContent = "Напишите имя и фамилию"; }
+    if (phone.replace(/\D/g, "").length < 10) { notify("error"); return err.textContent = "Введите номер телефона полностью"; }
+    if (!age) { notify("error"); return err.textContent = "Выберите возраст"; }
+    if (!API) { notify("success"); return send({t: "reg", name, phone, age}); }
+    const btn = document.getElementById("go");
+    busy(btn, true);
+    api("register", {name, phone, age})
+      .then(j => { S = j.state; notify("success"); toast("🎉 Вы зарегистрированы!"); screenHome(); })
+      .catch(e => { busy(btn, false); notify("error"); err.textContent = "Не удалось сохранить: " + e.message; });
+  };
+}
+
+// ------------------------------------------------------------- 3. главная / кабинет
+function screenHome() {
+  const g = QZ.ages[S.a];
+  setTheme(S.a); back(null);
+  const q = (S.q || "0/" + QZ.groupSize).split("/").map(Number);
+  const hist = (S.h || []).map(r => `<div class="row"><span>${esc(r[0])}</span><span>${esc(r[1])} · ${r[2]}/${r[3]}</span></div>`).join("");
+  render(`
+    <div class="hero"><div class="mascot">${MASCOT[S.a] || "🦊"}</div>
+      <h1>Привет, ${esc((S.n || "").split(" ")[0])}!</h1><p>${esc(g ? g.title_ru : "")}</p></div>
+    <div class="card level-card">
+      <div class="label">Ваш уровень</div>
+      ${S.l ? `<div class="medal">🏅</div><div class="level-name">${esc(S.l)}</div>
+        ${S.g ? `<span class="pill">👥 ${esc(S.g)}</span>`
+              : `<div class="muted">Группа собирается: <b>${q[0]} из ${q[1]}</b></div>
+                 <div class="meter"><i style="width:${Math.min(100, q[0] / q[1] * 100)}%"></i></div>`}`
+            : `<div class="medal">🎯</div><div class="level-name">Пока не определён</div>
+               <div class="muted">Пройдите тест — это 10–15 минут</div>`}
+      <button class="btn" id="test">${S.l ? "🔄 Пройти тест заново" : "📝 Пройти тест"}</button>
+    </div>
+    <div class="card"><div class="label">👤 Личный кабинет</div>
+      <div class="row"><span>Имя</span><span>${esc(S.n)}</span></div>
+      <div class="row"><span>Телефон</span><span>${esc(S.p)}</span></div>
+      <div class="row"><span>Возраст</span><span>${esc(g ? g.title_ru : "")}</span></div>
+    </div>
+    ${hist ? `<div class="card"><div class="label">📜 История тестов</div>${hist}</div>` : ""}`);
+  document.getElementById("test").onclick = () => { haptic("medium"); screenIntro(); };
+}
+
+// ------------------------------------------------------------- 4. тест
+let T = null;
+function screenIntro() {
+  const g = QZ.ages[S.a];
+  const total = g.blocks.reduce((s, b) => s + b.questions.length, 0);
+  back(screenHome);
+  render(`
+    <div class="hero"><div class="mascot">📝</div><h1>Тест на уровень</h1><p>${esc(g.title_ru)}</p></div>
+    <div class="card">
+      <p style="margin:0 0 12px">${esc(g.intro_ru)}</p>
+      <div class="row"><span>Этапов</span><span>${g.blocks.length}</span></div>
+      <div class="row"><span>Вопросов</span><span>до ${total}</span></div>
+      <div class="row"><span>Время</span><span>10–15 минут</span></div>
+      <p class="muted">Вопросы на казахском, с подсказкой на русском. Если этап не пройден, тест закончится — так уровень определяется точнее.</p>
+      <button class="btn" id="go">▶️ Начать тест</button>
+    </div>`);
+  document.getElementById("go").onclick = () => { haptic("medium"); startTest(); };
+}
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function startTest() {
+  const g = QZ.ages[S.a];
+  const seq = [];
+  g.blocks.forEach((b, bi) => shuffle(b.questions.map((_, qi) => qi)).forEach(qi => seq.push([bi, qi])));
+  T = {g, seq, pos: 0, ans: [], lock: false};   // ans: [этап, вопрос, выбранный вариант (-1 = не знаю)]
+  try { tg.enableClosingConfirmation(); } catch (e) {}
+  const leave = () => { try { tg.disableClosingConfirmation(); } catch (e) {} screenHome(); };
+  const msg = "Выйти из теста? Ответы не сохранятся.";
+  back(() => inTG && tg.showConfirm ? tg.showConfirm(msg, ok => ok && leave()) : (confirm(msg) && leave()));
+  showQ();
+}
+function splitEmoji(text) {   // "🍎 Бұл не?" -> большой эмодзи + текст
+  const m = text.match(/^((?:\p{Extended_Pictographic}|\p{Emoji_Presentation}|\d️?⃣)[‍️\p{Extended_Pictographic}\p{Emoji_Presentation}]*)\s+(.*)$/u);
+  return m ? `<span class="emo">${m[1]}</span><div class="q">${esc(m[2])}</div>` : `<div class="q">${esc(text)}</div>`;
+}
+function showQ() {
+  const [bi, qi] = T.seq[T.pos];
+  const q = T.g.blocks[bi].questions[qi];
+  const order = shuffle(q.options.map((_, i) => i));
+  const inBlock = T.seq.filter(x => x[0] === bi).length;
+  const posInBlock = T.seq.slice(0, T.pos).filter(x => x[0] === bi).length + 1;
+  T.lock = false;
+  render(`
+    <div class="topbar"><span>Этап ${bi + 1} из ${T.g.blocks.length}</span><span>Вопрос ${posInBlock}/${inBlock}</span></div>
+    <div class="stages">${T.g.blocks.map((_, i) => `<i class="${i < bi ? "done" : i === bi ? "cur" : ""}"></i>`).join("")}</div>
+    <div class="card qcard">${splitEmoji(q.q)}${q.ru ? `<div class="ru">${esc(q.ru)}</div>` : ""}</div>
+    <div class="opts">
+      ${order.map((o, i) => `<button class="opt" data-o="${o}"><span class="letter">${"ABCD"[i]}</span><span>${esc(q.options[o])}</span></button>`).join("")}
+      <button class="opt dk" data-o="-1">🤷 Не знаю</button>
+    </div>`);
+  document.querySelectorAll(".opt").forEach(b => b.onclick = () => {
+    if (T.lock) return;
+    T.lock = true; haptic(); b.classList.add("picked");
+    setTimeout(() => answer(+b.dataset.o), 220);
+  });
+}
+function blockPassed(bi) {
+  const a = T.ans.filter(x => x[0] === bi);
+  return a.length > 0 && a.filter(x => x[2] === 0).length / a.length >= (T.g.pass_ratio || QZ.passRatio);
+}
+function answer(o) {
+  const [bi, qi] = T.seq[T.pos];
+  T.ans.push([bi, qi, o]);
+  T.pos++;
+  const ended = T.pos === T.seq.length || T.seq[T.pos][0] !== bi;
+  if (ended) {
+    if (!blockPassed(bi) || T.pos === T.seq.length) return finish();
+    notify("success"); toast(`✅ Этап ${bi + 1} пройден!`);
+  }
+  showQ();
+}
+function finish() {
+  let passed = 0;
+  for (let i = 0; i < T.g.blocks.length && blockPassed(i); i++) passed = i + 1;
+  const level = passed ? T.g.blocks[passed - 1].level_ru : T.g.zero_level_ru;
+  const correct = T.ans.filter(x => x[2] === 0).length;
+  notify("success"); back(null); confetti();
+  render(`
+    <div class="big-emoji">🎉</div>
+    <div class="card level-card">
+      <div class="label">Ваш результат</div>
+      <div class="level-name">${esc(level)}</div>
+      <span class="pill">✅ ${correct} из ${T.ans.length} правильных</span>
+      <p class="muted" id="note" style="margin-top:14px">${API
+        ? "⏳ Сохраняем результат…"
+        : "Нажмите кнопку, чтобы сохранить результат."} Когда наберётся группа из ${QZ.groupSize} человек вашего уровня, мы напишем вам в чат 🙌</p>
+      <button class="btn" id="save">${API ? "👍 Готово" : "💾 Сохранить результат"}</button>
+    </div>`);
+  const btn = document.getElementById("save");
+  if (!API) { btn.onclick = () => { haptic("heavy"); send({t: "res", age: S.a, a: T.ans}); }; return; }
+  // API: результат сохраняется сразу, без кнопки
+  const answers = T.ans;
+  const save = () => {
+    busy(btn, true);
+    api("result", {a: answers}).then(j => {
+      S = j.state; busy(btn, false);
+      try { tg.disableClosingConfirmation(); } catch (e) {}
+      document.getElementById("note").innerHTML = "✅ Результат сохранён. Подробности мы отправили вам в чат. Когда наберётся группа из "
+        + QZ.groupSize + " человек вашего уровня, мы напишем вам 🙌";
+      btn.innerHTML = "👍 Готово"; btn.onclick = () => { haptic(); screenHome(); };
+    }).catch(e => {
+      busy(btn, false);
+      document.getElementById("note").textContent = "⚠️ Не удалось сохранить (" + e.message + "). Проверьте интернет и нажмите «Повторить».";
+      btn.innerHTML = "🔄 Повторить"; btn.onclick = save;
+    });
+  };
+  save();
+}
+
+// ------------------------------------------------------------- конфетти
+function confetti() {
+  const c = document.getElementById("confetti"), x = c.getContext("2d");
+  c.width = innerWidth * devicePixelRatio; c.height = innerHeight * devicePixelRatio; x.scale(devicePixelRatio, devicePixelRatio);
+  const css = getComputedStyle(document.body);
+  const colors = ["--accent", "--accent2", "--blob1", "--blob2", "--blob3"].map(v => css.getPropertyValue(v).trim());
+  const P = Array.from({length: 140}, () => ({x: innerWidth / 2, y: innerHeight / 3, vx: (Math.random() - .5) * 12,
+    vy: Math.random() * -12 - 3, s: Math.random() * 7 + 4, r: Math.random() * 6, c: colors[Math.random() * colors.length | 0]}));
+  let f = 0;
+  (function tick() {
+    x.clearRect(0, 0, innerWidth, innerHeight);
+    P.forEach(p => { p.vy += .32; p.x += p.vx; p.y += p.vy; p.r += .1;
+      x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.c; x.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); x.restore(); });
+    if (++f < 180) requestAnimationFrame(tick); else x.clearRect(0, 0, innerWidth, innerHeight);
+  })();
+}
+
+// ------------------------------------------------------------- старт
+(async function boot() {
+  if (API) {
+    render(`<div class="hero" style="padding-top:120px"><div class="mascot">🦊</div><p>Загрузка…</p></div>`);
+    try { S = (await api("state")).state; }
+    catch (e) { API = false; }   // API недоступен (например, GitHub Pages) → работаем через ?d= и sendData
+  }
+  if (!S.reg) screenWelcome(); else screenHome();
+})();
+</script>
+</body>
+</html>

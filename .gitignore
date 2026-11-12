@@ -1,0 +1,8 @@
+# Құпия деректер мен студенттер базасы GitHub-қа шықпауы керек
+.env
+*.db
+*.db.*
+*.bak
+import.tmp
+__pycache__/
+.claude/
