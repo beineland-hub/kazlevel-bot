@@ -18,10 +18,11 @@ import os
 import random
 import re
 import shutil
+import subprocess
 import sqlite3
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl
 
@@ -29,7 +30,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -39,7 +40,8 @@ from aiogram.types import (BotCommand, BotCommandScopeChat, BotCommandScopeDefau
                            ReplyKeyboardMarkup, ReplyKeyboardRemove, WebAppInfo)
 
 import db
-from build_webapp import quiz_js
+from build_webapp import AUDIO_DIR, audio_key, quiz_js, quiz_version
+import engine
 from questions import AGE_GROUPS, all_levels, group_size, level_ru, pass_ratio
 
 
@@ -133,6 +135,9 @@ def student_state(uid: int) -> dict:
                 state["g"] = group_title_ru(grp)
             else:
                 state["q"] = f"{len(db.pool(age, res[0]['level']))}/{group_size(age)}"
+        nxt = retake_after(uid)
+        if nxt:
+            state["rt"] = nxt.strftime("%d.%m в %H:%M")   # келесі тапсыру уақыты
     if is_admin(uid):
         state["adm"] = 1   # қызметтік жол тек админге көрінеді
     return state
@@ -311,13 +316,8 @@ async def register_student(bot: Bot, uid: int, username: str | None, name: str, 
 
 # ==================================================================== test (чат)
 def build_sequence(age: str) -> list[list[int]]:
-    """[блок, сұрақ] тізімі: блоктар жеңілден қиынға, блок ішінде араласады."""
-    seq = []
-    for bi, block in enumerate(AGE_GROUPS[age]["blocks"]):
-        qs = list(range(len(block["questions"])))
-        random.shuffle(qs)
-        seq += [[bi, qi] for qi in qs]
-    return seq
+    """[блок, сұрақ] тізімі: әр кезеңнен банктен біркелкі таңдалған сұрақтар (engine.make_plan)."""
+    return engine.make_plan(age)["seq"]
 
 
 async def show_question(target: Message, state: FSMContext, edit: bool):
@@ -390,7 +390,8 @@ async def test_answer(cb: CallbackQuery, state: FSMContext, bot: Bot):
         if sum(block) / len(block) < pass_ratio(age) or pos == len(seq):
             await state.clear()
             await cb.message.delete()
-            await save_and_report(bot, cb.from_user.id, age, seq, answers, dont_know)
+            level, _ = compute_level(age, seq, answers)
+            await save_and_report(bot, cb.from_user.id, age, level, sum(answers), len(answers), dont_know)
             return
     await show_question(cb.message, state, edit=True)
 
@@ -408,70 +409,55 @@ def compute_level(age: str, seq, answers) -> tuple[str, int]:
     return all_levels(age)[passed], passed
 
 
-async def save_and_report(bot: Bot, uid: int, age: str, seq, answers, dont_know: int) -> dict:
+RETAKE_LIMIT, RETAKE_DAYS = 2, 7   # 7 күнде 2 тапсыру (админге шектеу жоқ)
+
+
+def retake_after(uid: int) -> datetime | None:
+    """Пересдача шектелсе — қашаннан бастап қайта тапсыруға болады, әйтпесе None."""
+    if is_admin(uid):
+        return None
+    since = datetime.now() - timedelta(days=RETAKE_DAYS)
+    recent = db.results_since(uid, since.strftime("%Y-%m-%d %H:%M"))
+    if len(recent) < RETAKE_LIMIT:
+        return None
+    first = datetime.strptime(recent[-RETAKE_LIMIT]["taken_at"], "%Y-%m-%d %H:%M")
+    return first + timedelta(days=RETAKE_DAYS)
+
+
+async def save_and_report(bot: Bot, uid: int, age: str, level: str, correct: int, answered: int,
+                          dont_know: int, topics: tuple = ([], [])) -> dict:
     """Нәтижені сақтап, студентке (орысша) және админге (қазақша) хабарлайды."""
-    level, _ = compute_level(age, seq, answers)
-    correct, answered = sum(answers), len(answers)
     db.save_result(uid, age, level, correct, answered, dont_know)
     waiting = len(db.pool(age, level))
+    topics_ru, topics_kz = topics
+    review = ""
+    if topics_ru:
+        review = "\n\n📚 <b>Что стоит повторить:</b>\n" + "\n".join(f"• {esc(t)}" for t in topics_ru)
     await bot.send_message(uid,
         "🎉 <b>Тест завершён!</b>\n\n"
         f"🏅 Ваш результат: <b>{esc(level_ru(age, level))}</b>\n"
-        f"✅ Правильных ответов: {correct} из {answered}\n\n"
+        f"✅ Правильных ответов: {correct} из {answered}"
+        f"{review}\n\n"
         f"👥 Группа вашего уровня собирается: {min(waiting, group_size(age))}/{group_size(age)}.\n"
         "Как только она наберётся, мы сразу напишем вам здесь, "
         "и с вами свяжется преподаватель.\n\n"
         f"Результат сохранён в личном кабинете ({start_hint()}). Спасибо! 🙌",
         reply_markup=main_menu(uid))
+    await bot.send_message(uid,
+        "🎤 <b>Последний шаг (по желанию)</b>\n"
+        "Запишите голосовое сообщение на 30–60 секунд: расскажите о себе по-казахски — как сможете. "
+        "Преподаватель послушает и уточнит уровень. Просто отправьте голосовое сюда в чат.")
     st = db.get_student(uid)
+    weak = ""
+    if topics_kz:
+        weak = "\n📚 Әлсіз тақырыптар:\n" + "\n".join(f"• {esc(t)}" for t in topics_kz)
     await notify_admins(bot,
         "📊 <b>Тест нәтижесі</b>\n"
         f"👤 {esc(st['name'])} · 📱 {esc(st['phone'])}\n"
         f"🎂 {AGE_GROUPS[age]['title']}\n"
-        f"🏅 <b>{esc(level)}</b> ({correct}/{answered}, білмеймін: {dont_know})")
+        f"🏅 <b>{esc(level)}</b> ({correct}/{answered}, білмеймін: {dont_know}){weak}")
     await try_form_groups(bot, age, level)
-    return {"level": level_ru(age, level), "correct": correct, "answered": answered}
-
-
-def grade_answers(age: str, items) -> tuple[list, list, int]:
-    """Қосымшадан келген [блок, сұрақ, таңдалған нұсқаның МӘТІНІ | null] тізімін бағалайды.
-
-    Дұрыс жауап тек серверде (questions.py-да бірінші нұсқа). Қосымша нөмір емес, мәтін жібереді:
-    нөмір қабылданбайды, әйтпесе «0» жіберіп бәріне дұрыс жауап беруге болар еді.
-    null — «Не знаю»."""
-    blocks = AGE_GROUPS[age]["blocks"]
-    seq, answers, dont_know, seen = [], [], 0, set()
-    for item in (items or [])[:200]:
-        try:
-            bi, qi, choice = int(item[0]), int(item[1]), item[2]
-            opts = blocks[bi]["questions"][qi]["options"]
-        except (ValueError, TypeError, IndexError, KeyError):
-            continue
-        if bi < 0 or qi < 0 or (bi, qi) in seen:
-            continue
-        if choice is None:
-            ok = False
-            dont_know += 1
-        elif isinstance(choice, str) and choice in opts:
-            ok = choice == opts[0]
-        else:
-            continue
-        seen.add((bi, qi))
-        seq.append([bi, qi])
-        answers.append(ok)
-    return seq, answers, dont_know
-
-
-def should_continue(age: str, seq, answers) -> bool:
-    """Соңғы аяқталған кезеңнен өтті ме және келесі кезең бар ма — тестті жалғастыру керек пе."""
-    if not seq:
-        return True
-    blocks = AGE_GROUPS[age]["blocks"]
-    bi = seq[-1][0]
-    block = [a for a, (b, _) in zip(answers, seq) if b == bi]
-    if len(block) < len(blocks[bi]["questions"]):
-        return True   # кезең әлі аяқталмаған
-    return sum(block) / len(block) >= pass_ratio(age) and bi < len(blocks) - 1
+    return {"level": level_ru(age, level), "correct": correct, "answered": answered, "topics": topics_ru}
 
 
 # ========================================================== API (Railway, мәзір батырмасы)
@@ -532,26 +518,67 @@ async def api_register(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "state": student_state(user["id"])})
 
 
-async def api_progress(request: web.Request) -> web.Response:
-    """Кезең аяқталғанда: тестті жалғастыру керек пе (дұрыс жауаптар қосымшаға берілмейді)."""
+def _err(text: str, status: int = 400) -> web.Response:
+    return web.json_response({"ok": False, "error": text}, status=status)
+
+
+async def _attempt(request: web.Request):
+    """Сұраныстағы attempt осы студенттікі әрі аяқталмаған болуы керек."""
     body, user = await _api_user(request)
     st = db.get_student(user["id"])
     if not st:
-        return web.json_response({"ok": False, "error": "Не зарегистрирован"}, status=400)
-    seq, answers, _ = grade_answers(st["age_group"], body.get("a"))
-    return web.json_response({"ok": True, "cont": should_continue(st["age_group"], seq, answers)})
+        return body, user, None, None, _err("Не зарегистрирован")
+    try:
+        att = db.get_attempt(int(body.get("attempt")))
+    except (TypeError, ValueError):
+        att = None
+    if not att or att["tg_id"] != user["id"] or att["finished"]:
+        return body, user, st, None, _err("Попытка не найдена — начните тест заново")
+    return body, user, st, att, None
+
+
+async def api_start(request: web.Request) -> web.Response:
+    """Жаңа тапсыру: сервер сұрақтарды таңдап, жоспарды сақтайды (жауаптарсыз)."""
+    _, user = await _api_user(request)
+    st = db.get_student(user["id"])
+    if not st:
+        return _err("Не зарегистрирован")
+    nxt = retake_after(user["id"])
+    if nxt:
+        return _err(f"Пройти тест снова можно {nxt:%d.%m в %H:%M}. "
+                    f"Мы даём {RETAKE_LIMIT} попытки за {RETAKE_DAYS} дней, чтобы результат был честным.")
+    plan = engine.make_plan(st["age_group"])
+    aid = db.create_attempt(user["id"], st["age_group"], plan)
+    return web.json_response({"ok": True, "attempt": aid, "seq": plan["seq"], "ver": quiz_version()})
+
+
+async def api_progress(request: web.Request) -> web.Response:
+    """Кезең аяқталғанда: жалғастыру / шекарада қосымша сұрақтар / тоқтату."""
+    body, user, st, att, err = await _attempt(request)
+    if err:
+        return err
+    plan = att["plan"]
+    graded, _ = engine.grade(att["age_group"], plan, body.get("a"))
+    decision, extra = engine.decide(att["age_group"], plan, graded)
+    if decision == "extra":
+        db.save_attempt(att["id"], plan)
+    return web.json_response({"ok": True, "cont": decision != "stop", "extra": extra})
 
 
 async def api_result(request: web.Request) -> web.Response:
-    body, user = await _api_user(request)
-    st = db.get_student(user["id"])
-    if not st:
-        return web.json_response({"ok": False, "error": "Не зарегистрирован"}, status=400)
-    seq, answers, dont_know = grade_answers(st["age_group"], body.get("a"))
-    if not answers:
-        return web.json_response({"ok": False, "error": "Нет ответов"}, status=400)
-    res = await save_and_report(request.app["bot"], user["id"], st["age_group"],
-                                seq, answers, dont_know)
+    body, user, st, att, err = await _attempt(request)
+    if err:
+        return err
+    age, plan = att["age_group"], att["plan"]
+    graded, dont_know = engine.grade(age, plan, body.get("a"))
+    if not graded:
+        return _err("Нет ответов")
+    graded = engine.trim(age, plan, graded)
+    dont_know = sum(1 for (bi, qi), _ in graded.items() if [bi, qi, None] in body.get("a", []))
+    db.save_attempt(att["id"], plan, finished=True)
+    level = engine.level_of(age, plan, graded)
+    res = await save_and_report(request.app["bot"], user["id"], age, level, sum(graded.values()),
+                                len(graded), dont_know, engine.weak_topics(age, graded))
     return web.json_response({"ok": True, "result": res, "state": student_state(user["id"])})
 
 
@@ -622,17 +649,26 @@ async def web_questions(request: web.Request) -> web.Response:
                         headers={"Cache-Control": "no-store, max-age=0"})
 
 
+async def web_audio(request: web.Request) -> web.StreamResponse:
+    name = request.match_info["name"]
+    if not re.fullmatch(r"[0-9a-f]{12}\.m4a", name) or not (AUDIO_DIR / name).exists():
+        raise web.HTTPNotFound()
+    return web.FileResponse(AUDIO_DIR / name, headers={"Cache-Control": "public, max-age=86400"})
+
+
 def make_web_app(bot: Bot) -> web.Application:
     app = web.Application(client_max_size=256 * 1024, middlewares=[log_requests])
     app["bot"] = bot
     app.router.add_get("/", web_index)
     app.router.add_get("/index.html", web_index)
     app.router.add_get("/questions.js", web_questions)
+    app.router.add_get("/audio/{name}", web_audio)
     app.router.add_get("/health", lambda r: web.Response(text="ok"))
     app.router.add_post("/api/state", api_state)
     app.router.add_post("/api/register", api_register)
     app.router.add_post("/api/result", api_result)
     app.router.add_post("/api/progress", api_progress)
+    app.router.add_post("/api/start", api_start)
     app.router.add_post("/api/clientlog", api_clientlog)
     app.router.add_post("/api/debug", api_debug)
     return app
@@ -712,6 +748,7 @@ async def admin_help(msg: Message):
         "/export — барлық студенттер (Excel/CSV файл)\n"
         "/backup — базаның көшірмесі (students.db)\n"
         "/reset — өз жазбаңызды өшіру (тіркелуді қайта тексеру үшін)\n"
+        "/audio — балаларға арналған сұрақтарды өз дауысыңызбен жазу (/audio teens — жасөспірімдерге)\n"
         "Базаны ауыстыру үшін .db файлын ботқа жай жіберіңіз.")
 
 
@@ -876,6 +913,112 @@ async def admin_import(msg: Message, bot: Bot):
     await msg.answer(f"✅ База жүктелді: {n} студент. Ескі база .bak файлы болып сақталды.")
 
 
+# ================================================================ дыбыс (audio)
+AUDIO_REC: dict[int, dict] = {}   # админ сұрақ дыбысын жазып жатқанда: {admin_id: {"age":..., "queue": [...]}}
+
+
+def to_m4a(src: Path, dst: Path) -> bool:
+    """Telegram-ның OGG/Opus дауысын iPhone-да да ойнайтын M4A-ға айналдырады."""
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as e:
+        logging.warning("ffmpeg табылмады: %s", e)
+        return False
+    r = subprocess.run([exe, "-y", "-loglevel", "error", "-i", str(src), "-ac", "1", "-c:a", "aac",
+                        "-b:a", "64k", "-movflags", "+faststart", str(dst)], capture_output=True, timeout=120)
+    if r.returncode != 0:
+        logging.warning("ffmpeg қатесі: %s", r.stderr[:300])
+    return r.returncode == 0 and dst.exists()
+
+
+async def audio_prompt(msg: Message, uid: int) -> None:
+    rec = AUDIO_REC.get(uid)
+    if not rec or not rec["queue"]:
+        AUDIO_REC.pop(uid, None)
+        await msg.answer("✅ Барлық сұраққа дыбыс жазылды. Қосымшада 🔊 батырмасы пайда болды.")
+        return
+    bi, qi = rec["queue"][0]
+    q = AGE_GROUPS[rec["age"]]["blocks"][bi]["questions"][qi]
+    done = rec["total"] - len(rec["queue"])
+    await msg.answer(f"🎙 <b>{done + 1}/{rec['total']}</b> · {AGE_GROUPS[rec['age']]['title']} · {bi + 1}-кезең\n\n"
+                     f"«{esc(q['q'])}»\n\n"
+                     "Осы сұрақты баяу әрі анық оқып, <b>дауыстық хабарлама</b> жіберіңіз.\n"
+                     "/skip — өткізу · /stop — тоқтату")
+
+
+@router.message(Command("audio"))
+async def admin_audio(msg: Message, command: CommandObject):
+    """Сұрақтарды мұғалімнің дауысымен жазу: /audio (балалар) · /audio teens · /audio kids all (қайта жазу)."""
+    if not is_admin(msg.from_user.id):
+        return
+    args = (command.args or "kids").split()
+    age, redo = args[0], "all" in args[1:]
+    if age not in AGE_GROUPS:
+        await msg.answer("Жас тобы: /audio kids · /audio teens · /audio adults")
+        return
+    queue = [(bi, qi) for bi, b in enumerate(AGE_GROUPS[age]["blocks"]) for qi, q in enumerate(b["questions"])
+             if redo or not (AUDIO_DIR / f"{audio_key(age, q['q'])}.m4a").exists()]
+    if not queue:
+        await msg.answer("✅ Бұл топтың барлық сұрағына дыбыс бар. Қайта жазу үшін: "
+                         f"<code>/audio {age} all</code>")
+        return
+    AUDIO_REC[msg.from_user.id] = {"age": age, "queue": queue, "total": len(queue)}
+    await msg.answer(f"🎙 Дыбыс жазу басталды: {len(queue)} сұрақ. Бір сұраққа — бір дауыстық хабарлама.")
+    await audio_prompt(msg, msg.from_user.id)
+
+
+@router.message(Command("skip"))
+async def admin_audio_skip(msg: Message):
+    rec = AUDIO_REC.get(msg.from_user.id)
+    if rec and rec["queue"]:
+        rec["queue"].pop(0)
+        await audio_prompt(msg, msg.from_user.id)
+
+
+@router.message(Command("stop"))
+async def admin_audio_stop(msg: Message):
+    if AUDIO_REC.pop(msg.from_user.id, None) is not None:
+        await msg.answer("⏹ Дыбыс жазу тоқтатылды. Жалғастыру үшін /audio жазыңыз.")
+
+
+@router.message(F.voice)
+async def on_voice(msg: Message, bot: Bot):
+    uid = msg.from_user.id
+    rec = AUDIO_REC.get(uid)
+    if rec and rec["queue"]:
+        # мұғалім сұрақты оқып жазды → сақтап, M4A-ға айналдырамыз
+        bi, qi = rec["queue"][0]
+        q = AGE_GROUPS[rec["age"]]["blocks"][bi]["questions"][qi]
+        key = audio_key(rec["age"], q["q"])
+        AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+        src = AUDIO_DIR / f"{key}.ogg"
+        await bot.download(msg.voice, destination=src)
+        ok = await asyncio.to_thread(to_m4a, src, AUDIO_DIR / f"{key}.m4a")
+        if not ok:
+            await msg.answer("⚠️ Дыбыс сақталды, бірақ форматын өзгерту мүмкін болмады. /skip не қайта жіберіңіз.")
+            return
+        rec["queue"].pop(0)
+        await msg.answer("✅ Сақталды")
+        await audio_prompt(msg, uid)
+        return
+    # студенттің дауыстық тапсырмасы → мұғалімге
+    st = db.get_student(uid)
+    if not st:
+        await msg.answer("Сначала зарегистрируйтесь: /start")
+        return
+    res = db.get_results(uid, 1)
+    lvl = res[0]["level"] if res else "тест әлі тапсырылмаған"
+    caption = (f"🎤 <b>Дауыстық жауап</b>\n👤 {esc(st['name'])} · 📱 {esc(st['phone'])}\n"
+               f"🎂 {AGE_GROUPS[st['age_group']]['title']}\n🏅 {esc(lvl)}")
+    for aid in ADMIN_IDS:
+        try:
+            await bot.send_voice(aid, msg.voice.file_id, caption=caption)
+        except Exception as e:
+            logging.warning("Дауыс админге жіберілмеді %s: %s", aid, e)
+    await msg.answer("🙏 Спасибо! Преподаватель послушает запись и уточнит ваш уровень.")
+
+
 @router.message()
 async def fallback(msg: Message, state: FSMContext):
     if await state.get_state() == Test.running.state:
@@ -904,7 +1047,8 @@ async def setup_commands(bot: Bot) -> None:
                        BotCommand(command="groups", description="Құрылған топтар"),
                        BotCommand(command="export", description="Excel файл"),
                        BotCommand(command="backup", description="Базаның көшірмесі"),
-                       BotCommand(command="reset", description="Өз жазбамды өшіру (тест үшін)")]
+                       BotCommand(command="reset", description="Өз жазбамды өшіру (тест үшін)"),
+                       BotCommand(command="audio", description="Сұрақтарды дауыспен жазу")]
     for aid in ADMIN_IDS:
         try:
             await bot.set_my_commands(admin, scope=BotCommandScopeChat(chat_id=aid))

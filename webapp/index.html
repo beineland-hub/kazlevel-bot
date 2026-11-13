@@ -88,6 +88,8 @@
   .age.sel{border-color:var(--accent);background:#fff}
   .age .tick{margin-left:auto;font-size:22px;opacity:0;transition:opacity .2s}
   .age.sel .tick{opacity:1}
+  .topics{text-align:left}
+  .topic{padding:8px 12px;margin-top:6px;border-radius:12px;background:rgba(255,255,255,.7);font-size:14px}
   .consent{display:flex;gap:10px;align-items:flex-start;font-size:14px;margin-top:14px;cursor:pointer}
   .consent input{width:22px;height:22px;flex:none;margin-top:1px;accent-color:var(--accent)}
   .linkbtn{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;font:inherit;cursor:pointer}
@@ -150,7 +152,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
 const inTG = !!(tg && tg.platform && tg.platform !== "unknown");
 if (tg) { tg.ready(); tg.expand(); try { tg.disableVerticalSwipes && tg.disableVerticalSwipes(); } catch (e) {} }
 const QZ = window.QUIZ;   // вопросы БЕЗ отметки правильного ответа — проверяет сервер
-const VERSION = "v7";
+const VERSION = "v8";
 const ICON = {kids: "🧒", teens: "🧑‍🎓", adults: "🧑‍💼"};
 const MASCOT = {kids: "🦊", teens: "🚀", adults: "📚"};
 const $app = document.getElementById("app");
@@ -316,7 +318,9 @@ function screenHome() {
                  <div class="meter"><i style="width:${Math.min(100, q[0] / q[1] * 100)}%"></i></div>`}`
             : `<div class="medal">🎯</div><div class="level-name">Пока не определён</div>
                <div class="muted">Пройдите тест — это 10–15 минут</div>`}
-      <button class="btn" id="test">${S.l ? "🔄 Пройти тест заново" : "📝 Пройти тест"}</button>
+      ${S.rt ? `<button class="btn" disabled>🔒 Снова — ${esc(S.rt)}</button>
+                <div class="muted" style="margin-top:8px">Тест можно пройти 2 раза за 7 дней — так результат честнее.</div>`
+             : `<button class="btn" id="test">${S.l ? "🔄 Пройти тест заново" : "📝 Пройти тест"}</button>`}
     </div>
     <div class="card"><div class="label">👤 Личный кабинет</div>
       <div class="row"><span>Имя</span><span>${esc(S.n)}</span></div>
@@ -325,14 +329,15 @@ function screenHome() {
     </div>
     ${hist ? `<div class="card"><div class="label">📜 История тестов</div>${hist}</div>` : ""}
     <p class="muted center">Ваши данные: /privacy · удалить: /delete</p>`);
-  document.getElementById("test").onclick = () => { haptic("medium"); screenIntro(); };
+  const tb = document.getElementById("test");
+  if (tb) tb.onclick = () => { haptic("medium"); screenIntro(); };
 }
 
 // ------------------------------------------------------------- 4. тест
 let T = null;
 function screenIntro() {
   const g = QZ.ages[S.a];
-  const total = g.blocks.reduce((s, b) => s + b.questions.length, 0);
+  const total = g.blocks.reduce((s, b) => s + (b.ask || b.questions.length), 0);
   back(screenHome);
   render(`
     <div class="hero"><div class="mascot">📝</div><h1>Тест на уровень</h1><p>${esc(g.title_ru)}</p></div>
@@ -344,14 +349,16 @@ function screenIntro() {
       <p class="muted">Вопросы на казахском, с подсказкой на русском. Если этап не пройден, тест закончится — так уровень определяется точнее.</p>
       <button class="btn" id="go">▶️ Начать тест</button>
     </div>`);
-  document.getElementById("go").onclick = () => { haptic("medium"); startTest(); };
+  const go = document.getElementById("go");
+  go.onclick = () => { haptic("medium"); busy(go, true, "⏳ Готовим вопросы…");
+    api("start").then(j => { if (j.ver && j.ver !== QZ.ver) return location.reload(); startTest(j); }).catch(e => { busy(go, false);
+      message("⏳", "Пока нельзя", esc(e.message), "← Назад", screenHome); }); };
 }
 function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-function startTest() {
+function startTest(j) {
   const g = QZ.ages[S.a];
-  const seq = [];
-  g.blocks.forEach((b, bi) => shuffle(b.questions.map((_, qi) => qi)).forEach(qi => seq.push([bi, qi])));
-  T = {g, seq, pos: 0, ans: [], lock: false};   // ans: [этап, вопрос, текст выбранного варианта | null = не знаю]
+  // вопросы выбирает сервер: из банка, равномерно по урокам; при пересдаче — другие
+  T = {g, seq: j.seq, attempt: j.attempt, pos: 0, ans: [], lock: false};   // ans: [этап, вопрос, текст | null]
   try { tg.enableClosingConfirmation(); } catch (e) {}
   const leave = () => { try { tg.disableClosingConfirmation(); } catch (e) {} screenHome(); };
   const msg = "Выйти из теста? Ответы не сохранятся.";
@@ -373,13 +380,20 @@ function showQ() {
   render(`
     <div class="topbar"><span>Этап ${bi + 1} из ${T.g.blocks.length}</span><span>Вопрос ${posInBlock}/${inBlock}</span></div>
     <div class="stages">${T.g.blocks.map((_, i) => `<i class="${i < bi ? "done" : i === bi ? "cur" : ""}"></i>`).join("")}</div>
-    <div class="card qcard">${splitEmoji(q.q)}${q.ru ? `<div class="ru">${esc(q.ru)}</div>` : ""}</div>
+    <div class="card qcard">${splitEmoji(q.q)}${q.ru ? `<div class="ru">${esc(q.ru)}</div>` : ""}
+      ${q.audio ? `<button class="btn ghost small" id="listen">🔊 Послушать</button>` : ""}</div>
     <div class="opts">
       ${order.map((o, i) => `<button class="opt" data-o="${o}"><span class="letter">${"ABCD"[i]}</span><span>${esc(q.options[o])}</span></button>`).join("")}
       <button class="opt dk" data-o="-1">🤷 Не знаю</button>
     </div>`);
+  if (q.audio) {
+    const play = () => { try { T.sound && T.sound.pause(); T.sound = new Audio("audio/" + q.audio + ".m4a"); T.sound.play().catch(() => {}); } catch (e) {} };
+    document.getElementById("listen").onclick = () => { haptic(); play(); };
+    if (S.a === "kids") play();   // детям 1–4 класса вопрос читается сам
+  }
   document.querySelectorAll(".opt").forEach(b => b.onclick = () => {
     if (T.lock) return;
+    try { T.sound && T.sound.pause(); } catch (e) {}
     T.lock = true; haptic(); b.classList.add("picked");
     const o = +b.dataset.o;
     setTimeout(() => answer(o < 0 ? null : q.options[o]), 220);
@@ -390,11 +404,17 @@ function answer(choice) {
   T.ans.push([bi, qi, choice]);
   T.pos++;
   if (T.pos < T.seq.length && T.seq[T.pos][0] === bi) return showQ();   // этап ещё идёт
-  if (T.pos === T.seq.length) return finish();
-  // этап закончен — сервер решает, продолжать ли (ответы на клиенте не известны)
+  // этап закончен — сервер решает: дальше, ещё 2 вопроса (если не хватило одного ответа) или стоп
   render(`<div class="hero" style="padding-top:120px"><div class="mascot">⏳</div><p>Проверяем этап ${bi + 1}…</p></div>`);
-  const check = () => api("progress", {a: T.ans})
-    .then(j => { if (j.cont) { notify("success"); toast(`✅ Этап ${bi + 1} пройден!`); showQ(); } else finish(); })
+  const check = () => api("progress", {attempt: T.attempt, a: T.ans})
+    .then(j => {
+      if (j.extra && j.extra.length) {
+        T.seq.splice(T.pos, 0, ...j.extra);
+        toast(`🎯 Ещё ${j.extra.length} вопроса — уточняем уровень`); return showQ();
+      }
+      if (j.cont && T.pos < T.seq.length) { notify("success"); toast(`✅ Этап ${bi + 1} пройден!`); return showQ(); }
+      finish();
+    })
     .catch(e => { report("progress: " + e.message);
       message("😿", "Нет связи с сервером", "Проверьте интернет и попробуйте ещё раз. Ответы сохранены на этом экране.",
         "🔄 Повторить", check); });
@@ -404,7 +424,7 @@ function finish() {
   back(null);
   const answers = T.ans;
   render(`<div class="hero" style="padding-top:120px"><div class="mascot">🧮</div><p>Считаем результат…</p></div>`);
-  const save = () => api("result", {a: answers}).then(j => {
+  const save = () => api("result", {attempt: T.attempt, a: answers}).then(j => {
     S = j.state;
     try { tg.disableClosingConfirmation(); } catch (e) {}
     notify("success"); confetti();
@@ -415,8 +435,11 @@ function finish() {
         <div class="label">Ваш результат</div>
         <div class="level-name">${esc(j.result.level)}</div>
         <span class="pill">✅ ${j.result.correct} из ${j.result.answered} правильных</span>
+        ${(j.result.topics || []).length ? `<div class="topics"><div class="label" style="margin-top:16px">📚 Что стоит повторить</div>
+          ${j.result.topics.map(t => `<div class="topic">${esc(t)}</div>`).join("")}</div>` : ""}
         <p class="muted" style="margin-top:14px">✅ Результат сохранён, подробности мы отправили вам в чат.
           Когда наберётся группа из ${g ? g.group_size : ""} человек вашего уровня, мы напишем вам 🙌</p>
+        <p class="muted">🎤 По желанию: отправьте боту голосовое на 30–60 секунд о себе по-казахски — преподаватель уточнит уровень.</p>
         <button class="btn" id="done">👍 Готово</button>
       </div>`);
     document.getElementById("done").onclick = () => { haptic(); screenHome(); };

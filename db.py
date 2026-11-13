@@ -1,4 +1,5 @@
 """SQLite дерекқоры: студенттер, нәтижелер, топтар."""
+import json
 import os
 import sqlite3
 from datetime import datetime
@@ -58,6 +59,16 @@ def init() -> None:
             );
             """
         )
+        # Тест тапсыру жоспары: қай сұрақтар берілді (дұрыс жауаптар клиентке жіберілмейді)
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS attempts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                tg_id       INTEGER NOT NULL,
+                age_group   TEXT NOT NULL,
+                plan        TEXT NOT NULL,
+                started_at  TEXT NOT NULL,
+                finished    INTEGER NOT NULL DEFAULT 0
+            )""")
         # Ескі базаға жаңа баған қосу: дербес деректерді өңдеуге келісім берілген уақыт
         cols = {r["name"] for r in c.execute("PRAGMA table_info(students)")}
         if "consent" not in cols:
@@ -80,9 +91,36 @@ def add_student(tg_id: int, name: str, phone: str, age_group: str, username: str
         )
 
 
+def create_attempt(tg_id: int, age_group: str, plan: dict) -> int:
+    with _conn() as c:
+        return c.execute("INSERT INTO attempts(tg_id, age_group, plan, started_at) VALUES (?,?,?,?)",
+                         (tg_id, age_group, json.dumps(plan), _now())).lastrowid
+
+
+def get_attempt(attempt_id: int):
+    with _conn() as c:
+        row = c.execute("SELECT * FROM attempts WHERE id=?", (attempt_id,)).fetchone()
+    if not row:
+        return None
+    return {**dict(row), "plan": json.loads(row["plan"])}
+
+
+def save_attempt(attempt_id: int, plan: dict, finished: bool = False) -> None:
+    with _conn() as c:
+        c.execute("UPDATE attempts SET plan=?, finished=? WHERE id=?", (json.dumps(plan), int(finished), attempt_id))
+
+
+def results_since(tg_id: int, since: str) -> list:
+    """Берілген уақыттан бергі нәтижелер (пересдача ережесі үшін), ескісінен жаңасына."""
+    with _conn() as c:
+        return c.execute("SELECT * FROM results WHERE tg_id=? AND taken_at>=? ORDER BY id",
+                         (tg_id, since)).fetchall()
+
+
 def delete_student(tg_id: int) -> None:
     """Студентті, оның нәтижелерін және топ мүшелігін толық өшіреді."""
     with _conn() as c:
+        c.execute("DELETE FROM attempts WHERE tg_id=?", (tg_id,))
         c.execute("DELETE FROM group_members WHERE tg_id=?", (tg_id,))
         c.execute("DELETE FROM results WHERE tg_id=?", (tg_id,))
         c.execute("DELETE FROM students WHERE tg_id=?", (tg_id,))
