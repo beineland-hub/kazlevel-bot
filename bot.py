@@ -1078,6 +1078,11 @@ async def main():
                         "Ботқа /myid жазып, ID-ді .env файлына қосыңыз.")
     db.init()
     logging.info("База: %s", db.DB_PATH)
+    try:
+        import imageio_ffmpeg
+        logging.info("Дыбыс (ffmpeg): %s", imageio_ffmpeg.get_ffmpeg_version())
+    except Exception as e:
+        logging.warning("Дыбыс (ffmpeg) жоқ — /audio жазбалары M4A-ға айналмайды: %s", e)
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     await setup_commands(bot)
     if PORT:
