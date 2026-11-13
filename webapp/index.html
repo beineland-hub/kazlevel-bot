@@ -88,6 +88,10 @@
   .age.sel{border-color:var(--accent);background:#fff}
   .age .tick{margin-left:auto;font-size:22px;opacity:0;transition:opacity .2s}
   .age.sel .tick{opacity:1}
+  .consent{display:flex;gap:10px;align-items:flex-start;font-size:14px;margin-top:14px;cursor:pointer}
+  .consent input{width:22px;height:22px;flex:none;margin-top:1px;accent-color:var(--accent)}
+  .linkbtn{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;font:inherit;cursor:pointer}
+  .policy{font-size:14px;line-height:1.45;background:rgba(255,255,255,.75);border-radius:12px;padding:12px;margin-top:10px}
   .err{color:#D63B2F;font-size:14px;min-height:20px;margin-top:10px;font-weight:600}
 
   /* home */
@@ -143,62 +147,46 @@
 <div id="app"></div>
 <script>
 const tg = window.Telegram && window.Telegram.WebApp;
-// Төменгі батырма арқылы ашылғанда initData бос келеді, сондықтан platform бойынша тексереміз
 const inTG = !!(tg && tg.platform && tg.platform !== "unknown");
 if (tg) { tg.ready(); tg.expand(); try { tg.disableVerticalSwipes && tg.disableVerticalSwipes(); } catch (e) {} }
-const QZ = window.QUIZ;
+const QZ = window.QUIZ;   // вопросы БЕЗ отметки правильного ответа — проверяет сервер
+const VERSION = "v7";
 const ICON = {kids: "🧒", teens: "🧑‍🎓", adults: "🧑‍💼"};
 const MASCOT = {kids: "🦊", teens: "🚀", adults: "📚"};
-const AGE_HINT = {kids: "1–4 класс · игровой тест с картинками", teens: "5–11 класс", adults: "Взрослые · программа A1–C2"};
 const $app = document.getElementById("app");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const haptic = (t) => { try { tg.HapticFeedback.impactOccurred(t || "light"); } catch (e) {} };
 const notify = (t) => { try { tg.HapticFeedback.notificationOccurred(t); } catch (e) {} };
+let S = {};   // состояние ученика с сервера
 
-// ------------------------------------------------------------- состояние от бота (?d=base64url JSON)
-function readState() {
-  try {
-    const d = new URLSearchParams(location.search).get("d");
-    if (!d) return {};
-    const b = atob(d.replace(/-/g, "+").replace(/_/g, "/"));
-    return JSON.parse(new TextDecoder().decode(Uint8Array.from(b, c => c.charCodeAt(0))));
-  } catch (e) { return {}; }
+// ------------------------------------------------------------- связь с сервером
+async function api(path, body) {
+  const r = await fetch("api/" + path, {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(Object.assign({initData: tg ? tg.initData : ""}, body || {}))});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
 }
-let S = readState();
-const FROM_KEYBOARD = !!new URLSearchParams(location.search).get("d");   // ?d= бот кладёт только в кнопку внизу
-const VERSION = "v6";
-// любые ошибки показываем на экране и отправляем админу через бота
+// ошибки уходят админу в Telegram; служебная строка и журнал шагов видны только админу
 function report(msg, silent) {
   if (!silent) diag(msg);
   try {
     fetch("api/clientlog", {method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({initData: tg ? tg.initData : "", msg: String(msg), silent: !!silent,
-        info: (document.getElementById("diag") || {}).textContent || ""})}).catch(() => {});
+        info: [VERSION, tg && tg.platform, tg && tg.version].join(" · ")})}).catch(() => {});
   } catch (e) {}
 }
-// тихий журнал шагов (только в лог сервера, без уведомлений)
-const trace = (step) => report("trace: " + step, true);
+const trace = (step) => { if (S.adm) report("trace: " + step, true); };
 window.addEventListener("error", e => report("JS: " + e.message + " @" + (e.lineno || "?")));
 window.addEventListener("unhandledrejection", e => report("JS: " + (e.reason && e.reason.message || e.reason)));
 function diag(extra) {
+  if (!S.adm) return;
   let el = document.getElementById("diag");
   if (!el) { el = document.createElement("div"); el.id = "diag";
     el.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:9;pointer-events:none;text-align:center;"
       + "font-size:11px;color:#8c6b55;background:rgba(255,255,255,.7);padding:4px 8px";
     document.body.appendChild(el); }
-  el.textContent = [VERSION, tg ? (tg.platform + " " + tg.version) : "browser",
-    FROM_KEYBOARD ? "kbd" : "menu", "init:" + (tg && tg.initData ? tg.initData.length : 0),
-    "api:" + (API ? "on" : "off")].join(" · ") + (extra ? " · " + extra : "");
-}
-// Мәзір батырмасынан ашылса initData бар → бот API-і арқылы жұмыс істейміз (Railway).
-// Төменгі батырмадан ашылса initData бос → ?d= және sendData арқылы.
-let API = !!(inTG && tg.initData);
-async function api(path, body) {
-  const r = await fetch("api/" + path, {method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(Object.assign({initData: tg.initData}, body || {}))});
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok || !j.ok) throw new Error(j.error || ("HTTP " + r.status));
-  return j;
+  el.textContent = ["admin", VERSION, tg ? tg.platform + " " + tg.version : "browser"].join(" · ") + (extra ? " · " + extra : "");
 }
 function busy(btn, on, text) {
   if (!btn) return;
@@ -206,45 +194,34 @@ function busy(btn, on, text) {
   else { btn.innerHTML = btn.dataset.t || btn.innerHTML; btn.disabled = false; }
 }
 
-// ------------------------------------------------------------- тема
+// ------------------------------------------------------------- оформление
 function setTheme(age) {
   document.body.className = age || "";
   const c = getComputedStyle(document.body).getPropertyValue("--bg1").trim();
   try { tg.setHeaderColor(c); tg.setBackgroundColor(c); tg.setBottomBarColor && tg.setBottomBarColor(c); } catch (e) {}
 }
-
-function render(html) {
-  $app.innerHTML = `<div class="screen">${html}</div>`;
-  window.scrollTo(0, 0);
-}
+function render(html) { $app.innerHTML = `<div class="screen">${html}</div>`; window.scrollTo(0, 0); }
 function back(fn) {
   if (!tg || !tg.BackButton) return;
   tg.BackButton.offClick(back._fn || (() => {}));
   if (fn) { back._fn = () => { haptic(); fn(); }; tg.BackButton.onClick(back._fn); tg.BackButton.show(); }
   else tg.BackButton.hide();
 }
-function send(obj) {
-  const data = JSON.stringify(obj);
-  if (!inTG) return alert("Открыто вне Telegram. Данные для бота:\n" + data);
-  try { tg.disableClosingConfirmation(); } catch (e) {}
-  try { tg.sendData(data); }
-  catch (e) {
-    // sendData работает только из кнопки внизу; из меню без API данные не отправить
-    const msg = "Не удалось отправить данные (" + (e.message || e) + "). Закройте приложение, "
-      + "отправьте боту /start и откройте его кнопкой «Начать» слева от поля ввода.";
-    const err = document.getElementById("err") || document.getElementById("note");
-    if (err) err.textContent = msg; else alert(msg);
-    notify("error");
-  }
-}
 function toast(text) {
   const t = document.createElement("div"); t.className = "toast"; t.textContent = text;
   document.body.appendChild(t); setTimeout(() => t.remove(), 1700);
 }
+function message(mascot, title, text, btnText, onBtn) {
+  render(`<div class="hero" style="padding-top:90px"><div class="mascot">${mascot}</div><h1>${title}</h1><p>${text}</p></div>
+    ${btnText ? `<div class="card"><button class="btn" id="msgbtn">${btnText}</button></div>` : ""}`);
+  if (btnText) document.getElementById("msgbtn").onclick = onBtn;
+}
+const groupSizes = () => [...new Set(Object.values(QZ.ages).map(a => a.group_size))].sort((a, b) => a - b);
 
 // ------------------------------------------------------------- 1. приветствие
 function screenWelcome() {
   setTheme(""); back(null);
+  const gs = groupSizes();
   render(`
     <div class="hero">
       <div class="mascot">🦊</div>
@@ -254,9 +231,9 @@ function screenWelcome() {
     <div class="card">
       <div class="label">Как это работает</div>
       <div class="steps">
-        <div class="step"><b>1</b><span>Укажите имя, телефон и возраст</span></div>
+        <div class="step"><b>1</b><span>Укажите имя, телефон и класс или возраст</span></div>
         <div class="step"><b>2</b><span>Пройдите тест — вопросы усложняются постепенно</span></div>
-        <div class="step"><b>3</b><span>Получите уровень и место в группе из ${QZ.groupSize} человек</span></div>
+        <div class="step"><b>3</b><span>Получите уровень и место в группе (${gs[0]}–${gs[gs.length - 1]} человек)</span></div>
       </div>
       <button class="btn" id="go">Начать 🚀</button>
     </div>`);
@@ -264,6 +241,9 @@ function screenWelcome() {
 }
 
 // ------------------------------------------------------------- 2. регистрация
+const POLICY = `Мы храним имя и фамилию ученика, номер телефона, возрастную группу и результаты теста.
+  Эти данные нужны только чтобы определить уровень, собрать учебную группу и связаться с вами по поводу занятий.
+  Мы не передаём их третьим лицам. Удалить свои данные можно в любой момент командой /delete в чате с ботом.`;
 function screenRegister() {
   let age = null;
   setTheme(""); back(screenWelcome);
@@ -274,55 +254,46 @@ function screenRegister() {
         <input id="name" maxlength="60" placeholder="Например: Айгуль Серикова" autocomplete="name"></div>
       <div class="field"><label>Номер телефона</label>
         <input id="phone" type="tel" inputmode="tel" placeholder="+7 701 123 45 67" autocomplete="tel">
-        ${inTG && tg.requestContact ? `<button class="btn ghost small" id="tgphone">📱 Взять номер из Telegram</button>` : ""}
+        ${tg && tg.requestContact ? `<button class="btn ghost small" id="tgphone">📱 Взять номер из Telegram</button>` : ""}
       </div>
-      <div class="field"><label>Возраст ученика</label>
+      <div class="field"><label>Класс или возраст ученика</label>
         <div class="ages">${Object.entries(QZ.ages).map(([k, g]) => `
-          <div class="age" data-k="${k}"><div class="ico">${ICON[k]}</div>
-            <div><b>${esc(g.title_ru)}</b><small>${AGE_HINT[k]}</small></div><span class="tick">✅</span></div>`).join("")}
+          <div class="age" data-k="${k}"><div class="ico">${ICON[k] || "🙂"}</div>
+            <div><b>${esc(g.title_ru)}</b><small>${esc(g.hint_ru)}</small></div><span class="tick">✅</span></div>`).join("")}
         </div></div>
-      <p class="muted">Для ребёнка укажите его имя и возраст, а телефон — родителя.</p>
+      <p class="muted">Для ребёнка укажите его имя и класс, а телефон — родителя.</p>
+      <label class="consent"><input type="checkbox" id="consent">
+        <span>Я согласен(на) на обработку персональных данных. Для ребёнка согласие даёт родитель.
+          <button type="button" class="linkbtn" id="policy">Что мы храним?</button></span></label>
+      <div class="policy" id="policytext" hidden>${esc(POLICY)}</div>
       <div class="err" id="err"></div>
       <button class="btn" id="go">Зарегистрироваться ✨</button>
     </div>`);
+  trace("register screen shown");
   document.querySelectorAll(".age").forEach(el => el.onclick = () => {
     document.querySelectorAll(".age").forEach(x => x.classList.remove("sel"));
     el.classList.add("sel"); age = el.dataset.k; setTheme(age); haptic();
   });
+  document.getElementById("policy").onclick = (e) => {
+    e.preventDefault(); const p = document.getElementById("policytext"); p.hidden = !p.hidden; };
   const tp = document.getElementById("tgphone");
   if (tp) tp.onclick = () => tg.requestContact((ok, res) => {
     const p = ok && res && res.responseUnsafe && res.responseUnsafe.contact && res.responseUnsafe.contact.phone_number;
     if (p) document.getElementById("phone").value = (p.startsWith("+") ? "" : "+") + p;
   });
-  trace("register screen shown");
-  const goBtn = document.getElementById("go");
-  goBtn.addEventListener("touchstart", () => trace("register touchstart"), {passive: true});
-  goBtn.onclick = () => { trace("register click"); try { submit(); } catch (e) {
-    trace("register exception " + (e.message || e));
-    document.getElementById("err").textContent = "Ошибка: " + (e.message || e); notify("error"); } };
-  const submit = () => {
+  const btn = document.getElementById("go"), err = document.getElementById("err");
+  btn.onclick = () => {
     const name = document.getElementById("name").value.trim().replace(/\s+/g, " ");
     const phone = document.getElementById("phone").value.trim();
-    const err = document.getElementById("err");
-    trace(`submit name=${name.length} phone=${phone.replace(/\D/g, "").length} age=${age} api=${API}`);
+    const consent = document.getElementById("consent").checked;
+    trace(`submit name=${name.length} phone=${phone.replace(/\D/g, "").length} age=${age} consent=${consent}`);
     if (name.length < 2) { notify("error"); return err.textContent = "Напишите имя и фамилию"; }
     if (phone.replace(/\D/g, "").length < 10) { notify("error"); return err.textContent = "Введите номер телефона полностью"; }
-    if (!age) { notify("error"); return err.textContent = "Выберите возраст"; }
-    if (!API) {
-      if (inTG && !FROM_KEYBOARD) {
-        // открыто не кнопкой внизу и без связи с сервером — Telegram молча проигнорирует sendData
-        notify("error");
-        return err.textContent = "Не удаётся связаться с сервером. Закройте приложение, отправьте боту /start "
-          + "и откройте его снова кнопкой «Начать» слева от поля ввода.";
-      }
-      err.textContent = "⏳ Отправляем…"; notify("success");
-      return send({t: "reg", name, phone, age});
-    }
-    const btn = document.getElementById("go");
-    busy(btn, true);
-    trace("register api start");
-    api("register", {name, phone, age})
-      .then(j => { trace("register api ok"); S = j.state; notify("success"); toast("🎉 Вы зарегистрированы!"); screenHome(); })
+    if (!age) { notify("error"); return err.textContent = "Выберите класс или возраст"; }
+    if (!consent) { notify("error"); return err.textContent = "Отметьте согласие на обработку данных"; }
+    err.textContent = ""; busy(btn, true);
+    api("register", {name, phone, age, consent: true})
+      .then(j => { S = j.state; notify("success"); toast("🎉 Вы зарегистрированы!"); screenHome(); })
       .catch(e => { busy(btn, false); notify("error"); err.textContent = "Не удалось сохранить: " + e.message;
         report("register: " + e.message); });
   };
@@ -332,7 +303,7 @@ function screenRegister() {
 function screenHome() {
   const g = QZ.ages[S.a];
   setTheme(S.a); back(null);
-  const q = (S.q || "0/" + QZ.groupSize).split("/").map(Number);
+  const q = (S.q || "0/" + (g ? g.group_size : 10)).split("/").map(Number);
   const hist = (S.h || []).map(r => `<div class="row"><span>${esc(r[0])}</span><span>${esc(r[1])} · ${r[2]}/${r[3]}</span></div>`).join("");
   render(`
     <div class="hero"><div class="mascot">${MASCOT[S.a] || "🦊"}</div>
@@ -350,9 +321,10 @@ function screenHome() {
     <div class="card"><div class="label">👤 Личный кабинет</div>
       <div class="row"><span>Имя</span><span>${esc(S.n)}</span></div>
       <div class="row"><span>Телефон</span><span>${esc(S.p)}</span></div>
-      <div class="row"><span>Возраст</span><span>${esc(g ? g.title_ru : "")}</span></div>
+      <div class="row"><span>Группа</span><span>${esc(g ? g.title_ru : "")}</span></div>
     </div>
-    ${hist ? `<div class="card"><div class="label">📜 История тестов</div>${hist}</div>` : ""}`);
+    ${hist ? `<div class="card"><div class="label">📜 История тестов</div>${hist}</div>` : ""}
+    <p class="muted center">Ваши данные: /privacy · удалить: /delete</p>`);
   document.getElementById("test").onclick = () => { haptic("medium"); screenIntro(); };
 }
 
@@ -379,11 +351,12 @@ function startTest() {
   const g = QZ.ages[S.a];
   const seq = [];
   g.blocks.forEach((b, bi) => shuffle(b.questions.map((_, qi) => qi)).forEach(qi => seq.push([bi, qi])));
-  T = {g, seq, pos: 0, ans: [], lock: false};   // ans: [этап, вопрос, выбранный вариант (-1 = не знаю)]
+  T = {g, seq, pos: 0, ans: [], lock: false};   // ans: [этап, вопрос, текст выбранного варианта | null = не знаю]
   try { tg.enableClosingConfirmation(); } catch (e) {}
   const leave = () => { try { tg.disableClosingConfirmation(); } catch (e) {} screenHome(); };
   const msg = "Выйти из теста? Ответы не сохранятся.";
   back(() => inTG && tg.showConfirm ? tg.showConfirm(msg, ok => ok && leave()) : (confirm(msg) && leave()));
+  trace("test start " + S.a);
   showQ();
 }
 function splitEmoji(text) {   // "🍎 Бұл не?" -> большой эмодзи + текст
@@ -408,60 +381,50 @@ function showQ() {
   document.querySelectorAll(".opt").forEach(b => b.onclick = () => {
     if (T.lock) return;
     T.lock = true; haptic(); b.classList.add("picked");
-    setTimeout(() => answer(+b.dataset.o), 220);
+    const o = +b.dataset.o;
+    setTimeout(() => answer(o < 0 ? null : q.options[o]), 220);
   });
 }
-function blockPassed(bi) {
-  const a = T.ans.filter(x => x[0] === bi);
-  return a.length > 0 && a.filter(x => x[2] === 0).length / a.length >= (T.g.pass_ratio || QZ.passRatio);
-}
-function answer(o) {
+function answer(choice) {
   const [bi, qi] = T.seq[T.pos];
-  T.ans.push([bi, qi, o]);
+  T.ans.push([bi, qi, choice]);
   T.pos++;
-  const ended = T.pos === T.seq.length || T.seq[T.pos][0] !== bi;
-  if (ended) {
-    if (!blockPassed(bi) || T.pos === T.seq.length) return finish();
-    notify("success"); toast(`✅ Этап ${bi + 1} пройден!`);
-  }
-  showQ();
+  if (T.pos < T.seq.length && T.seq[T.pos][0] === bi) return showQ();   // этап ещё идёт
+  if (T.pos === T.seq.length) return finish();
+  // этап закончен — сервер решает, продолжать ли (ответы на клиенте не известны)
+  render(`<div class="hero" style="padding-top:120px"><div class="mascot">⏳</div><p>Проверяем этап ${bi + 1}…</p></div>`);
+  const check = () => api("progress", {a: T.ans})
+    .then(j => { if (j.cont) { notify("success"); toast(`✅ Этап ${bi + 1} пройден!`); showQ(); } else finish(); })
+    .catch(e => { report("progress: " + e.message);
+      message("😿", "Нет связи с сервером", "Проверьте интернет и попробуйте ещё раз. Ответы сохранены на этом экране.",
+        "🔄 Повторить", check); });
+  check();
 }
 function finish() {
-  let passed = 0;
-  for (let i = 0; i < T.g.blocks.length && blockPassed(i); i++) passed = i + 1;
-  const level = passed ? T.g.blocks[passed - 1].level_ru : T.g.zero_level_ru;
-  const correct = T.ans.filter(x => x[2] === 0).length;
-  notify("success"); back(null); confetti();
-  render(`
-    <div class="big-emoji">🎉</div>
-    <div class="card level-card">
-      <div class="label">Ваш результат</div>
-      <div class="level-name">${esc(level)}</div>
-      <span class="pill">✅ ${correct} из ${T.ans.length} правильных</span>
-      <p class="muted" id="note" style="margin-top:14px">${API
-        ? "⏳ Сохраняем результат…"
-        : "Нажмите кнопку, чтобы сохранить результат."} Когда наберётся группа из ${QZ.groupSize} человек вашего уровня, мы напишем вам в чат 🙌</p>
-      <button class="btn" id="save">${API ? "👍 Готово" : "💾 Сохранить результат"}</button>
-    </div>`);
-  const btn = document.getElementById("save");
-  if (!API) { btn.onclick = () => { haptic("heavy"); send({t: "res", age: S.a, a: T.ans}); }; return; }
-  // API: результат сохраняется сразу, без кнопки
+  back(null);
   const answers = T.ans;
-  const save = () => {
-    busy(btn, true);
-    api("result", {a: answers}).then(j => {
-      S = j.state; busy(btn, false);
-      try { tg.disableClosingConfirmation(); } catch (e) {}
-      document.getElementById("note").innerHTML = "✅ Результат сохранён. Подробности мы отправили вам в чат. Когда наберётся группа из "
-        + QZ.groupSize + " человек вашего уровня, мы напишем вам 🙌";
-      btn.innerHTML = "👍 Готово"; btn.onclick = () => { haptic(); screenHome(); };
-    }).catch(e => {
-      report("result: " + e.message);
-      busy(btn, false);
-      document.getElementById("note").textContent = "⚠️ Не удалось сохранить (" + e.message + "). Проверьте интернет и нажмите «Повторить».";
-      btn.innerHTML = "🔄 Повторить"; btn.onclick = save;
-    });
-  };
+  render(`<div class="hero" style="padding-top:120px"><div class="mascot">🧮</div><p>Считаем результат…</p></div>`);
+  const save = () => api("result", {a: answers}).then(j => {
+    S = j.state;
+    try { tg.disableClosingConfirmation(); } catch (e) {}
+    notify("success"); confetti();
+    const g = QZ.ages[S.a];
+    render(`
+      <div class="big-emoji">🎉</div>
+      <div class="card level-card">
+        <div class="label">Ваш результат</div>
+        <div class="level-name">${esc(j.result.level)}</div>
+        <span class="pill">✅ ${j.result.correct} из ${j.result.answered} правильных</span>
+        <p class="muted" style="margin-top:14px">✅ Результат сохранён, подробности мы отправили вам в чат.
+          Когда наберётся группа из ${g ? g.group_size : ""} человек вашего уровня, мы напишем вам 🙌</p>
+        <button class="btn" id="done">👍 Готово</button>
+      </div>`);
+    document.getElementById("done").onclick = () => { haptic(); screenHome(); };
+  }).catch(e => {
+    report("result: " + e.message);
+    message("😿", "Не удалось сохранить", "Проверьте интернет и нажмите «Повторить» — ответы не потеряются.<br><small>"
+      + esc(e.message) + "</small>", "🔄 Повторить", save);
+  });
   save();
 }
 
@@ -484,31 +447,19 @@ function confetti() {
 
 // ------------------------------------------------------------- старт
 (async function boot() {
-  trace(`boot ${VERSION} platform=${tg && tg.platform} ver=${tg && tg.version} init=${tg && tg.initData ? tg.initData.length : 0} kbd=${FROM_KEYBOARD} url=${location.pathname}${location.search.slice(0, 20)}`);
-  if (inTG && !API && !FROM_KEYBOARD) {
-    // Telegram не передал данные авторизации — сохранить результат будет нельзя, поэтому сразу говорим, что делать
-    diag(); report("boot: no initData");
-    render(`<div class="hero" style="padding-top:90px"><div class="mascot">🦊</div>
-      <h1>Откройте приложение заново</h1>
-      <p>Закройте это окно и нажмите кнопку <b>«Начать»</b> слева от поля ввода в чате с ботом.</p></div>`);
-    return;
+  if (!(tg && tg.initData)) {
+    // без данных авторизации Telegram сохранить ничего нельзя — говорим, как открыть правильно
+    return message("🦊", "Откройте приложение в Telegram",
+      "Откройте чат с ботом и нажмите кнопку <b>«Начать»</b> слева от поля ввода.");
   }
-  if (API) {
-    render(`<div class="hero" style="padding-top:120px"><div class="mascot">🦊</div><p>Загрузка…</p></div>`);
-    try { S = (await api("state")).state; }
-    catch (e) {
-      report("state: " + e.message);
-      if (!FROM_KEYBOARD) {
-        // открыто из меню, но сервер не ответил — без него результат не сохранить, поэтому честно сообщаем
-        render(`<div class="hero" style="padding-top:90px"><div class="mascot">😿</div>
-          <h1>Не удалось подключиться</h1><p>Проверьте интернет и попробуйте ещё раз.<br><small>${esc(e.message)}</small></p></div>
-          <div class="card"><button class="btn" id="retry">🔄 Повторить</button></div>`);
-        document.getElementById("retry").onclick = () => location.reload();
-        return;
-      }
-      API = false;   // есть данные от кнопки внизу → работаем через ?d= и sendData
-    }
+  render(`<div class="hero" style="padding-top:120px"><div class="mascot">🦊</div><p>Загрузка…</p></div>`);
+  try { S = (await api("state")).state; }
+  catch (e) {
+    report("state: " + e.message);
+    return message("😿", "Не удалось подключиться", `Проверьте интернет и попробуйте ещё раз.<br><small>${esc(e.message)}</small>`,
+      "🔄 Повторить", () => location.reload());
   }
+  trace(`boot ${VERSION} platform=${tg.platform} ver=${tg.version}`);
   if (!S.reg) screenWelcome(); else screenHome();
   diag();
 })();

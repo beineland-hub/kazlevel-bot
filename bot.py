@@ -7,7 +7,6 @@ My Kazakh Level — қазақ тілі деңгейін анықтайтын Te
 Іске қосу:  python bot.py     (.env: BOT_TOKEN, ADMIN_IDS, WEBAPP_URL)
 """
 import asyncio
-import base64
 import csv
 import hashlib
 import hmac
@@ -41,7 +40,7 @@ from aiogram.types import (BotCommand, BotCommandScopeChat, BotCommandScopeDefau
 
 import db
 from build_webapp import quiz_js
-from questions import AGE_GROUPS, GROUP_SIZE, all_levels, level_ru, pass_ratio
+from questions import AGE_GROUPS, all_levels, group_size, level_ru, pass_ratio
 
 
 # ======================================================================= config
@@ -74,7 +73,6 @@ WEBAPP_DIR = Path(__file__).with_name("webapp")
 router = Router()
 esc = html.escape
 
-BTN_START = "🚀 Начать"
 BTN_HELP = "❓ Помощь"
 BTN_TEST = "📝 Пройти тест"      # Mini App жоқ кезде
 BTN_CABINET = "👤 Мой кабинет"   # Mini App жоқ кезде
@@ -118,13 +116,6 @@ def group_title_kz(grp) -> str:
 
 
 # ===================================================================== keyboards
-def webapp_link(uid: int) -> str:
-    """Mini App URL-і: студенттің деректері ?d=<base64url JSON> ретінде беріледі."""
-    raw = json.dumps(student_state(uid), ensure_ascii=False, separators=(",", ":")).encode()
-    d = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    return f"{WEBAPP_URL}{'&' if '?' in WEBAPP_URL else '?'}d={d}"
-
-
 def student_state(uid: int) -> dict:
     """Қосымшаға керек деректер: тіркелу, деңгей, топ, тарих (студентке — орысша)."""
     st = db.get_student(uid)
@@ -141,7 +132,9 @@ def student_state(uid: int) -> dict:
             if grp:
                 state["g"] = group_title_ru(grp)
             else:
-                state["q"] = f"{len(db.pool(age, res[0]['level']))}/{GROUP_SIZE}"
+                state["q"] = f"{len(db.pool(age, res[0]['level']))}/{group_size(age)}"
+    if is_admin(uid):
+        state["adm"] = 1   # қызметтік жол тек админге көрінеді
     return state
 
 
@@ -159,7 +152,7 @@ def app_url() -> str:
 
 def start_hint() -> str:
     return ("кнопку <b>«Начать»</b> слева от поля ввода" if menu_mode()
-            else f"<b>«{BTN_START if WEBAPP_URL else BTN_TEST}»</b>")
+            else f"<b>«{BTN_TEST}»</b>")
 
 
 def open_app_kb(text: str = "🚀 Начать") -> InlineKeyboardMarkup | None:
@@ -172,17 +165,12 @@ def open_app_kb(text: str = "🚀 Начать") -> InlineKeyboardMarkup | None:
 
 def main_menu(uid: int) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
     """Төменгі мәзір. Railway-де жоқ (ескісін де өшіреді) — тек «Начать» мәзір батырмасы.
-    Компьютерде: сол жақта «🚀 Начать» (қосымша), оң жақта «❓ Помощь»."""
+    Компьютерде (сервер жоқ): тест пен кабинет чат арқылы."""
     if menu_mode():
         return ReplyKeyboardRemove()
-    if WEBAPP_URL:
-        first = KeyboardButton(text=BTN_START, web_app=WebAppInfo(url=webapp_link(uid)))
-        rows = [[first, KeyboardButton(text=BTN_HELP)]]
-    else:
-        rows = [[KeyboardButton(text=BTN_TEST), KeyboardButton(text=BTN_CABINET)],
-                [KeyboardButton(text=BTN_HELP)]]
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True,
-                               input_field_placeholder="Нажмите «🚀 Начать» 👇")
+    rows = [[KeyboardButton(text=BTN_TEST), KeyboardButton(text=BTN_CABINET)],
+            [KeyboardButton(text=BTN_HELP)]]
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
 
 
 def age_kb() -> InlineKeyboardMarkup:
@@ -242,7 +230,9 @@ async def start(msg: Message, state: FSMContext):
     # Mini App жоқ: тіркелу чатта
     await msg.answer(greeting().split("Что нужно сделать")[0], reply_markup=ReplyKeyboardRemove())
     await state.set_state(Reg.name)
-    await msg.answer("✍️ Напишите имя и фамилию ученика:")
+    await msg.answer("✍️ Напишите имя и фамилию ученика.\n\n"
+                     "<i>Регистрируясь, вы соглашаетесь на обработку персональных данных "
+                     "(для ребёнка — согласие родителя). Подробнее: /privacy</i>")
 
 
 @router.message(Command("help"))
@@ -255,7 +245,7 @@ async def help_cmd(msg: Message):
         "• Вопросы становятся сложнее шаг за шагом. Если этап не пройден, тест "
         "заканчивается — это нормально, так мы точнее определяем уровень.\n"
         "• Не знаете ответа — нажмите <b>«🤷 Не знаю»</b>, не угадывайте.\n"
-        f"• Когда наберётся группа из {GROUP_SIZE} человек вашего уровня, "
+        "• Когда наберётся группа вашего уровня (6–10 человек, в зависимости от возраста), "
         "мы сообщим вам здесь, и с вами свяжется преподаватель.\n\n"
         "Пройти тест заново можно в любое время.",
         reply_markup=main_menu(msg.from_user.id))
@@ -304,9 +294,9 @@ async def reg_age(cb: CallbackQuery, state: FSMContext, bot: Bot):
 
 
 async def register_student(bot: Bot, uid: int, username: str | None, name: str, phone: str,
-                           age: str, quiet: bool = False) -> None:
+                           age: str, quiet: bool = False, consent: bool = True) -> None:
     """Чаттан, Mini App-тан не API-ден тіркелу осы жерде аяқталады."""
-    db.add_student(uid, name, phone, age, username)
+    db.add_student(uid, name, phone, age, username, consent=consent)
     text = (f"🎉 <b>{esc(name)}</b>, вы зарегистрированы!\n"
             f"Возрастная группа: {title_ru(age)}\n\n"
             + ("Тест уже открыт в приложении — удачи! 🍀" if quiet else
@@ -428,7 +418,7 @@ async def save_and_report(bot: Bot, uid: int, age: str, seq, answers, dont_know:
         "🎉 <b>Тест завершён!</b>\n\n"
         f"🏅 Ваш результат: <b>{esc(level_ru(age, level))}</b>\n"
         f"✅ Правильных ответов: {correct} из {answered}\n\n"
-        f"👥 Группа вашего уровня собирается: {min(waiting, GROUP_SIZE)}/{GROUP_SIZE}.\n"
+        f"👥 Группа вашего уровня собирается: {min(waiting, group_size(age))}/{group_size(age)}.\n"
         "Как только она наберётся, мы сразу напишем вам здесь, "
         "и с вами свяжется преподаватель.\n\n"
         f"Результат сохранён в личном кабинете ({start_hint()}). Спасибо! 🙌",
@@ -444,52 +434,44 @@ async def save_and_report(bot: Bot, uid: int, age: str, seq, answers, dont_know:
 
 
 def grade_answers(age: str, items) -> tuple[list, list, int]:
-    """Қосымшадан келген [блок, сұрақ, таңдау] тізімін тексеріп, бағалайды (questions.py бойынша)."""
+    """Қосымшадан келген [блок, сұрақ, таңдалған нұсқаның МӘТІНІ | null] тізімін бағалайды.
+
+    Дұрыс жауап тек серверде (questions.py-да бірінші нұсқа). Қосымша нөмір емес, мәтін жібереді:
+    нөмір қабылданбайды, әйтпесе «0» жіберіп бәріне дұрыс жауап беруге болар еді.
+    null — «Не знаю»."""
     blocks = AGE_GROUPS[age]["blocks"]
-    seq, answers, dont_know = [], [], 0
+    seq, answers, dont_know, seen = [], [], 0, set()
     for item in (items or [])[:200]:
         try:
-            bi, qi, o = (int(x) for x in item)
+            bi, qi, choice = int(item[0]), int(item[1]), item[2]
             opts = blocks[bi]["questions"][qi]["options"]
-        except (ValueError, TypeError, IndexError):
+        except (ValueError, TypeError, IndexError, KeyError):
             continue
-        if bi < 0 or qi < 0 or not -1 <= o < len(opts):
+        if bi < 0 or qi < 0 or (bi, qi) in seen:
             continue
+        if choice is None:
+            ok = False
+            dont_know += 1
+        elif isinstance(choice, str) and choice in opts:
+            ok = choice == opts[0]
+        else:
+            continue
+        seen.add((bi, qi))
         seq.append([bi, qi])
-        answers.append(o == 0)
-        dont_know += o == -1
+        answers.append(ok)
     return seq, answers, dont_know
 
 
-# ===================================================================== mini app
-@router.message(F.web_app_data)
-async def webapp_data(msg: Message, state: FSMContext, bot: Bot):
-    """Mini App-тан келген дерек: {"t":"reg",...} немесе {"t":"res",...}."""
-    await state.clear()
-    try:
-        data = json.loads(msg.web_app_data.data)
-    except ValueError:
-        return
-    uid = msg.from_user.id
-
-    if data.get("t") == "reg":
-        name = " ".join(str(data.get("name", "")).split())[:60]
-        phone = normalize_phone(str(data.get("phone", "")))
-        age = data.get("age")
-        if len(name) < 2 or not phone or age not in AGE_GROUPS:
-            await msg.answer("Данные неполные. Пожалуйста, попробуйте ещё раз.",
-                             reply_markup=main_menu(uid))
-            return
-        await register_student(bot, uid, msg.from_user.username, name, phone, age)
-
-    elif data.get("t") == "res":
-        st = db.get_student(uid)
-        if not st:
-            await msg.answer("Сначала зарегистрируйтесь: /start")
-            return
-        seq, answers, dont_know = grade_answers(st["age_group"], data.get("a"))
-        if answers:
-            await save_and_report(bot, uid, st["age_group"], seq, answers, dont_know)
+def should_continue(age: str, seq, answers) -> bool:
+    """Соңғы аяқталған кезеңнен өтті ме және келесі кезең бар ма — тестті жалғастыру керек пе."""
+    if not seq:
+        return True
+    blocks = AGE_GROUPS[age]["blocks"]
+    bi = seq[-1][0]
+    block = [a for a, (b, _) in zip(answers, seq) if b == bi]
+    if len(block) < len(blocks[bi]["questions"]):
+        return True   # кезең әлі аяқталмаған
+    return sum(block) / len(block) >= pass_ratio(age) and bi < len(blocks) - 1
 
 
 # ========================================================== API (Railway, мәзір батырмасы)
@@ -543,9 +525,21 @@ async def api_register(request: web.Request) -> web.Response:
     age = body.get("age")
     if len(name) < 2 or not phone or age not in AGE_GROUPS:
         return web.json_response({"ok": False, "error": "Данные неполные"}, status=400)
+    if body.get("consent") is not True:
+        return web.json_response({"ok": False, "error": "Нужно согласие на обработку данных"}, status=400)
     await register_student(request.app["bot"], user["id"], user.get("username"),
-                           name, phone, age, quiet=True)
+                           name, phone, age, quiet=True, consent=True)
     return web.json_response({"ok": True, "state": student_state(user["id"])})
+
+
+async def api_progress(request: web.Request) -> web.Response:
+    """Кезең аяқталғанда: тестті жалғастыру керек пе (дұрыс жауаптар қосымшаға берілмейді)."""
+    body, user = await _api_user(request)
+    st = db.get_student(user["id"])
+    if not st:
+        return web.json_response({"ok": False, "error": "Не зарегистрирован"}, status=400)
+    seq, answers, _ = grade_answers(st["age_group"], body.get("a"))
+    return web.json_response({"ok": True, "cont": should_continue(st["age_group"], seq, answers)})
 
 
 async def api_result(request: web.Request) -> web.Response:
@@ -638,6 +632,7 @@ def make_web_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/state", api_state)
     app.router.add_post("/api/register", api_register)
     app.router.add_post("/api/result", api_result)
+    app.router.add_post("/api/progress", api_progress)
     app.router.add_post("/api/clientlog", api_clientlog)
     app.router.add_post("/api/debug", api_debug)
     return app
@@ -666,8 +661,9 @@ async def form_group(bot: Bot, age: str, level: str, members) -> None:
 
 
 async def try_form_groups(bot: Bot, age: str, level: str) -> None:
-    while len(waiting := db.pool(age, level)) >= GROUP_SIZE:
-        await form_group(bot, age, level, waiting[:GROUP_SIZE])
+    size = group_size(age)
+    while len(waiting := db.pool(age, level)) >= size:
+        await form_group(bot, age, level, waiting[:size])
 
 
 # ================================================================ cabinet (чат)
@@ -692,7 +688,7 @@ async def cabinet(msg: Message):
             lines.append(f"\n👥 Группа: <b>{esc(group_title_ru(grp))}</b>")
         else:
             n = len(db.pool(age, res[0]["level"]))
-            lines.append(f"\n⏳ Группа собирается: {n}/{GROUP_SIZE}")
+            lines.append(f"\n⏳ Группа собирается: {n}/{group_size(age)}")
     else:
         lines.append(f"Вы ещё не проходили тест. Нажмите «{BTN_TEST}».")
     await msg.answer("\n".join(lines), reply_markup=main_menu(msg.from_user.id))
@@ -741,7 +737,7 @@ async def admin_queue(msg: Message):
     lines, rows = ["⏳ <b>Топқа кезекте тұрғандар</b>\n"], []
     for p in pools:
         age, level = p["age_group"], p["level"]
-        lines.append(f"• {AGE_GROUPS[age]['title']} · {esc(level)}: <b>{p['n']}/{GROUP_SIZE}</b>")
+        lines.append(f"• {AGE_GROUPS[age]['title']} · {esc(level)}: <b>{p['n']}/{group_size(age)}</b>")
         rows.append([InlineKeyboardButton(
             text=f"Жабу: {AGE_GROUPS[age]['title']} · {level} ({p['n']})"[:60],
             callback_data=f"close:{age}:{all_levels(age).index(level)}")])
@@ -761,7 +757,7 @@ async def admin_close(cb: CallbackQuery, bot: Bot):
         await cb.answer("Кезек бос", show_alert=True)
         return
     await cb.answer("Топ құрылды ✅")
-    await form_group(bot, age, level, waiting[:GROUP_SIZE])
+    await form_group(bot, age, level, waiting[:group_size(age)])
 
 
 @router.message(Command("groups"))
@@ -794,6 +790,48 @@ async def admin_export(msg: Message):
                     r["dont_know"] or "", r["taken_at"] or "", grp])
     data = buf.getvalue().encode("utf-8-sig")  # Excel кириллицаны дұрыс ашуы үшін
     await msg.answer_document(BufferedInputFile(data, filename="students.csv"))
+
+
+PRIVACY_TEXT = (
+    "🔒 <b>Какие данные мы храним</b>\n\n"
+    "• имя и фамилию ученика, номер телефона, возрастную группу, имя пользователя в Telegram;\n"
+    "• результаты теста и группу, в которую записан ученик.\n\n"
+    "<b>Зачем:</b> только чтобы определить уровень казахского языка, собрать учебную группу "
+    "и связаться с вами по поводу занятий. Данные не передаются третьим лицам.\n\n"
+    "<b>Для детей</b> согласие на обработку данных даёт родитель или законный представитель.\n\n"
+    "Удалить все свои данные можно в любой момент командой /delete."
+)
+
+
+@router.message(Command("privacy"))
+async def privacy_cmd(msg: Message):
+    await msg.answer(PRIVACY_TEXT)
+
+
+@router.message(Command("delete"))
+async def delete_cmd(msg: Message):
+    if not db.get_student(msg.from_user.id):
+        await msg.answer("У нас нет ваших данных.")
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🗑 Да, удалить", callback_data="del:yes"),
+        InlineKeyboardButton(text="Отмена", callback_data="del:no")]])
+    await msg.answer("Удалить ваши данные, результаты тестов и место в группе? "
+                     "Это действие нельзя отменить.", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("del:"))
+async def delete_confirm(cb: CallbackQuery, bot: Bot):
+    if cb.data == "del:no":
+        await cb.message.edit_text("Хорошо, ничего не удалено.")
+        await cb.answer()
+        return
+    st = db.get_student(cb.from_user.id)
+    db.delete_student(cb.from_user.id)
+    await cb.message.edit_text("✅ Ваши данные удалены. Чтобы пройти тест снова, нажмите /start.")
+    await cb.answer()
+    if st:
+        await notify_admins(bot, f"🗑 Студент өз деректерін өшірді: {esc(st['name'])} · {esc(st['phone'])}")
 
 
 @router.message(Command("reset"))
@@ -856,7 +894,9 @@ async def fallback(msg: Message, state: FSMContext):
 async def setup_commands(bot: Bot) -> None:
     """Мәзірдегі командалар: студентке орысша, админге қосымша қазақша командалар."""
     student = [BotCommand(command="start", description="🚀 Начать"),
-               BotCommand(command="help", description="❓ Помощь")]
+               BotCommand(command="help", description="❓ Помощь"),
+               BotCommand(command="privacy", description="🔒 Мои данные"),
+               BotCommand(command="delete", description="🗑 Удалить мои данные")]
     await bot.set_my_commands(student, scope=BotCommandScopeDefault())
     admin = student + [BotCommand(command="admin", description="Админ командалары"),
                        BotCommand(command="stats", description="Статистика"),

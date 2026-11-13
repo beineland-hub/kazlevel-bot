@@ -58,6 +58,10 @@ def init() -> None:
             );
             """
         )
+        # Ескі базаға жаңа баған қосу: дербес деректерді өңдеуге келісім берілген уақыт
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(students)")}
+        if "consent" not in cols:
+            c.execute("ALTER TABLE students ADD COLUMN consent TEXT")
 
 
 # ---------------------------------------------------------------- students
@@ -66,12 +70,13 @@ def get_student(tg_id: int):
         return c.execute("SELECT * FROM students WHERE tg_id=?", (tg_id,)).fetchone()
 
 
-def add_student(tg_id: int, name: str, phone: str, age_group: str, username: str | None) -> None:
+def add_student(tg_id: int, name: str, phone: str, age_group: str, username: str | None,
+                consent: bool = False) -> None:
     with _conn() as c:
         c.execute(
-            "INSERT OR REPLACE INTO students(tg_id, name, phone, age_group, username, registered) "
-            "VALUES (?,?,?,?,?,?)",
-            (tg_id, name, phone, age_group, username, _now()),
+            "INSERT OR REPLACE INTO students(tg_id, name, phone, age_group, username, registered, consent) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (tg_id, name, phone, age_group, username, _now(), _now() if consent else None),
         )
 
 
